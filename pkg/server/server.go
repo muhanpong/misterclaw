@@ -65,6 +65,7 @@ type Request struct {
 	Button   string   `json:"button,omitempty"`
 	DPad     string   `json:"dpad,omitempty"`
 	Text     string   `json:"text,omitempty"`
+	Layout   string   `json:"layout,omitempty"` // text: "jis" for a JIS-layout machine
 
 	// OSD navigation
 	Target string `json:"target,omitempty"`
@@ -627,7 +628,16 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 				"combo":   req.Combo,
 			})
 		case req.Text != "":
-			if err := mister.TypeText(req.Text); err != nil {
+			text := req.Text
+			if req.Layout == "jis" {
+				t, err := mister.TranslateForJIS(text)
+				if err != nil {
+					send(map[string]interface{}{"mister": "input", "success": false, "error": err.Error()})
+					return
+				}
+				text = t
+			}
+			if err := mister.TypeText(text); err != nil {
 				send(map[string]interface{}{
 					"mister":  "input",
 					"success": false,

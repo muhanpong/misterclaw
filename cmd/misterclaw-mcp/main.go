@@ -238,6 +238,7 @@ func toolsList() []ToolDef {
 					"button": map[string]interface{}{"type": "string", "description": "Gamepad button to press (a, b, x, y, start, select, l, r, coin)"},
 					"dpad":   map[string]interface{}{"type": "string", "description": "Gamepad d-pad direction (up, down, left, right)"},
 					"text":   map[string]interface{}{"type": "string", "description": "Text string to type character by character with automatic shift handling (e.g. 'LOAD\"*\",8,1\\n'). Supports full US keyboard layout."},
+					"layout": map[string]interface{}{"type": "string", "enum": []string{"us", "jis"}, "description": "Keyboard layout of the emulated machine for text. 'jis' for Japanese machines (e.g. MSX1 core with a Panasonic/Sony JP pack): symbols such as ( ) & ' = ^ @ : * + are sent from the keys where a JIS keyboard has them."},
 				},
 			},
 		},
@@ -433,6 +434,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		req := map[string]interface{}{"mister": "input"}
 		if v, ok := args["text"].(string); ok && v != "" {
 			req["text"] = v
+			if l, ok := args["layout"].(string); ok && l != "" {
+				req["layout"] = l
+			}
 		} else if v, ok := args["button"].(string); ok && v != "" {
 			req["button"] = v
 		} else if v, ok := args["dpad"].(string); ok && v != "" {

@@ -919,7 +919,11 @@ func cmdInput(args []string) error {
 		if len(modeArgs) == 0 {
 			return fmt.Errorf("usage: misterclaw-send input type <text>\nTypes the text string character by character using correct keycodes.\nExample: misterclaw-send input type \"LOAD\\\"*\\\",8,1\"")
 		}
-		req = map[string]interface{}{"mister": "input", "text": strings.Join(modeArgs, " ")}
+		layout, rest := extractFlag(modeArgs, "layout", "")
+		req = map[string]interface{}{"mister": "input", "text": strings.Join(rest, " ")}
+		if layout != "" {
+			req["layout"] = layout
+		}
 	default:
 		return fmt.Errorf("unknown input mode: %s (use: key, raw, combo, button, dpad, type)", mode)
 	}
