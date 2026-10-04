@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -814,6 +815,9 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 			"osd_mask": maskInfo,
 		})
 
+	case "mount":
+		s.handleMount(req, send)
+
 	case "system_info":
 		system := req.System
 		if system == "" {
@@ -1227,4 +1231,71 @@ func osdMaskFor(req Request, ctx *coreContext) (mister.OSDMask, map[string]inter
 		return m, info
 	}
 	return mister.OSDMask{}, map[string]interface{}{"source": "none"}
+}
+
+
+// handleMount loads or mounts a file through the core's OSD, without
+// restarting the core: navigate to the F/S row named by Target, open its
+// file browser and walk it to Path.  Needs log_file_entry=1 in MiSTer.ini
+// so the browser can be followed (see mister.BrowseAndSelect).
+func (s *Server) handleMount(req Request, send func(interface{})) {
+	fail := func(msg string, extra map[string]interface{}) {
+		r := map[string]interface{}{"mister": "mount", "success": false, "error": msg}
+		for k, v := range extra {
+			r[k] = v
+		}
+		send(r)
+	}
+	if req.Target == "" || req.Path == "" {
+		fail("mount requires target (the OSD row, e.g. \"Mount Drive A:\") and path", nil)
+		return
+	}
+	path := req.Path
+	if !filepath.IsAbs(path) {
+		path = filepath.Join("/media/fat", path)
+	}
+	if st, err := os.Stat(path); err != nil || st.IsDir() {
+		fail(fmt.Sprintf("no such file: %s", path), nil)
+		return
+	}
+	ctx, ok := s.resolveCore(req, send, true)
+	if !ok {
+		return
+	}
+	mask, maskInfo := osdMaskFor(req, ctx)
+	loc, err := mister.FindOSDItemPositionKnown(ctx.OSD, req.Target, mask)
+	if err != nil {
+		fail(err.Error(), map[string]interface{}{"osd_mask": maskInfo})
+		return
+	}
+	switch loc.Item.Type {
+	case "file_load", "file_load_core", "mount":
+	default:
+		fail(fmt.Sprintf("%q is a %s row, not a file load or mount row", req.Target, loc.Item.Type), nil)
+		return
+	}
+	mister.ClearBrowserState()
+	if err := mister.OSDNavigateToOSD(ctx.OSD, mask, req.Target); err != nil {
+		fail(err.Error(), map[string]interface{}{"osd_mask": maskInfo})
+		return
+	}
+	if err := mister.PressKey("enter"); err != nil {
+		fail(err.Error(), nil)
+		return
+	}
+	time.Sleep(700 * time.Millisecond)
+	st, err := mister.BrowseAndSelect(path)
+	if err != nil {
+		fail(err.Error(), map[string]interface{}{"browser": st, "osd_mask": maskInfo})
+		return
+	}
+	send(map[string]interface{}{
+		"mister":   "mount",
+		"success":  true,
+		"target":   req.Target,
+		"row":      loc.Item.Raw,
+		"path":     path,
+		"browser":  st,
+		"osd_mask": maskInfo,
+	})
 }

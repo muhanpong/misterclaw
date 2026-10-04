@@ -268,7 +268,7 @@ func toolsList() []ToolDef {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"core": map[string]interface{}{"type": "string", "description": "Core name. If omitted, uses the currently loaded core."},
+					"core":     map[string]interface{}{"type": "string", "description": "Core name. If omitted, uses the currently loaded core."},
 					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
 				},
 			},
@@ -320,7 +320,7 @@ func toolsList() []ToolDef {
 				"type":     "object",
 				"required": []string{"target"},
 				"properties": map[string]interface{}{
-					"target": map[string]interface{}{"type": "string", "description": "Menu item name to navigate to (e.g. 'Reset', 'FDD0', 'Aspect ratio')"},
+					"target":   map[string]interface{}{"type": "string", "description": "Menu item name to navigate to (e.g. 'Reset', 'FDD0', 'Aspect ratio')"},
 					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
 				},
 			},
@@ -333,6 +333,19 @@ func toolsList() []ToolDef {
 				"required": []string{"system"},
 				"properties": map[string]interface{}{
 					"system": map[string]interface{}{"type": "string", "description": "System name (e.g. 'PC8801', 'SNES', 'Genesis')"},
+				},
+			},
+		},
+		{
+			Name:        "mister_mount",
+			Description: "Load or mount a file into the running core through its OSD, without restarting it (e.g. change the floppy of a multi-disk game, swap a VHD, load a ROM into a slot). Navigates to the named F/S row, opens MiSTer's file browser and walks it to the path, checking each step. Requires log_file_entry=1 in MiSTer.ini (a section for the core is enough); without it the request is refused before any file is chosen. Only file load / mount rows are accepted.",
+			InputSchema: map[string]interface{}{
+				"type":     "object",
+				"required": []string{"target", "path"},
+				"properties": map[string]interface{}{
+					"target":   map[string]interface{}{"type": "string", "description": "OSD row of the file load or mount, e.g. 'Mount Drive A:', 'Load SD card', 'Load'"},
+					"path":     map[string]interface{}{"type": "string", "description": "File on the MiSTer, absolute or relative to /media/fat (e.g. 'games/MSX1/DSKS/game_2.dsk')"},
+					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask if known (see mister_osd_navigate)."},
 				},
 			},
 		},
@@ -496,6 +509,18 @@ func callTool(params json.RawMessage) MCPToolResult {
 			req["osd_mask"] = m
 		}
 		return doMisterCommand(req, formatOSDNavigate)
+
+	case "mister_mount":
+		target, _ := args["target"].(string)
+		path, _ := args["path"].(string)
+		if target == "" || path == "" {
+			return errorResult("target and path are required")
+		}
+		req := map[string]interface{}{"mister": "mount", "target": target, "path": path}
+		if m, ok := osdMaskArg(args); ok {
+			req["osd_mask"] = m
+		}
+		return doMisterCommand(req, formatMount)
 
 	case "mister_system_info":
 		system, _ := args["system"].(string)
@@ -1085,4 +1110,17 @@ func errorResult(msg string) MCPToolResult {
 		Content: []MCPContent{{Type: "text", Text: msg}},
 		IsError: true,
 	}
+}
+
+func formatMount(resp map[string]interface{}) MCPToolResult {
+	if success, ok := resp["success"].(bool); ok && !success {
+		errMsg, _ := resp["error"].(string)
+		if b, ok := resp["browser"].(map[string]interface{}); ok {
+			errMsg += fmt.Sprintf(" (browser: select=%v dir=%v item=%v)", b["select"], b["dir"], b["item"])
+		}
+		return errorResult(errMsg)
+	}
+	path, _ := resp["path"].(string)
+	target, _ := resp["target"].(string)
+	return textResult(fmt.Sprintf("Selected %s via OSD row %q (file browser reported \"selected\")", path, target))
 }

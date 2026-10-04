@@ -104,6 +104,8 @@ func main() {
 		err = cmdRescan(cmdArgs)
 	case "osd-navigate":
 		err = cmdOSDNavigate(cmdArgs)
+	case "mount":
+		err = cmdMount(cmdArgs)
 	case "system-info":
 		err = cmdSystemInfo(cmdArgs)
 	case "discover":
@@ -1615,4 +1617,34 @@ func BuildRequest(cmd string, args []string) (map[string]interface{}, error) {
 	default:
 		return nil, fmt.Errorf("unknown command: %s", cmd)
 	}
+}
+
+
+// cmdMount: misterclaw-send mount [--mask=0xNNNN] <OSD row> <path>
+func cmdMount(args []string) error {
+	maskStr, args := extractFlag(args, "mask", "m")
+	if len(args) < 2 {
+		return fmt.Errorf("usage: misterclaw-send mount [--mask=0xNNNN] <OSD row> <path>\nExample: misterclaw-send mount \"Mount Drive A:\" games/MSX1/DSKS/disk2.dsk")
+	}
+	req := map[string]interface{}{"mister": "mount", "target": args[0], "path": strings.Join(args[1:], " ")}
+	if maskStr != "" {
+		m, err := strconv.ParseUint(maskStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask: %v", err)
+		}
+		req["osd_mask"] = m
+	}
+	resp, err := sendRequest(req)
+	if err != nil {
+		return err
+	}
+	if jsonFlag {
+		outputJSON(resp)
+		return nil
+	}
+	if ok, _ := resp["success"].(bool); !ok {
+		return fmt.Errorf("%v (browser: %v)", resp["error"], resp["browser"])
+	}
+	fmt.Printf("Selected: %v\n", resp["path"])
+	return nil
 }
