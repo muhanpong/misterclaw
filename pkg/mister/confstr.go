@@ -1060,12 +1060,13 @@ func isOSDSubPageItem(item MenuItem) bool {
 
 // OSDItemLocation describes where a menu item is in the OSD hierarchy.
 type OSDItemLocation struct {
-	Position      int  // 0-indexed position within its context (top-level or sub-page)
-	OnSubPage     bool // true if item is on a sub-page
-	PageID        int  // sub-page ID (0 = top-level)
-	PagePosition  int  // position of the page entry in top-level menu (for sub-page nav)
-	BottomOffset  int  // distance from bottom of menu (for bottom-up navigation)
-	UseBottomNav  bool // true if item should be navigated from bottom (more reliable)
+	Position     int      // 0-indexed position within its context (top-level or sub-page)
+	OnSubPage    bool     // true if item is on a sub-page
+	PageID       int      // sub-page ID (0 = top-level)
+	PagePosition int      // position of the page entry in top-level menu (for sub-page nav)
+	BottomOffset int      // distance from bottom of menu (for bottom-up navigation)
+	UseBottomNav bool     // true if item should be navigated from bottom (more reliable)
+	Item         MenuItem // the matched row (FindOSDItemPositionMask)
 }
 
 // FindOSDItemPosition finds the location of a named target in the MiSTer OSD
@@ -1077,65 +1078,10 @@ func FindOSDItemPosition(db *ConfStrDB, coreName, target string, cfgData []byte)
 	if osd == nil {
 		return OSDItemLocation{}, fmt.Errorf("core not found in confstr db: %s", coreName)
 	}
-	return FindOSDItemPositionIn(osd, target, cfgData)
-}
-
-// FindOSDItemPositionIn is FindOSDItemPosition for a resolved OSD.
-func FindOSDItemPositionIn(osd *CoreOSD, target string, cfgData []byte) (OSDItemLocation, error) {
-	coreName := osd.CoreName
-
-	// Re-parse from raw for most accurate menu structure
-	items := ParseConfStr(osd.ConfStrRaw)
-	targetLower := strings.ToLower(target)
-
-	// Search top-level items
-	pagePositions := map[int]int{} // pageID → top-level position
-	pos := 0
-	for _, item := range items {
-		if !isOSDTopLevelItem(item) {
-			continue
-		}
-		if cfgData != nil && !item.Visible(cfgData) {
-			continue
-		}
-		if item.Type == "sub_page" {
-			pagePositions[item.PageID] = pos
-		}
-		if strings.ToLower(item.Name) == targetLower || strings.ToLower(item.Label) == targetLower {
-			return OSDItemLocation{Position: pos}, nil
-		}
-		pos++
-	}
-
-	totalTopLevel := pos
-
-	// Search sub-page items
-	for pageID, pagePos := range pagePositions {
-		subPos := 0
-		for _, item := range items {
-			if item.PageID != pageID || item.Type == "sub_page" {
-				continue
-			}
-			if !isOSDSubPageItem(item) {
-				continue
-			}
-			if cfgData != nil && !item.Visible(cfgData) {
-				continue
-			}
-			if strings.ToLower(item.Name) == targetLower || strings.ToLower(item.Label) == targetLower {
-				return OSDItemLocation{
-					Position:      subPos,
-					OnSubPage:     true,
-					PageID:        pageID,
-					PagePosition:  pagePos,
-					BottomOffset:  totalTopLevel - 1 - pagePos,
-				}, nil
-			}
-			subPos++
-		}
-	}
-
-	return OSDItemLocation{}, fmt.Errorf("target %q not found in OSD menu for core %s", target, coreName)
+	// H/h refer to the core's OSD mask, not .CFG bits: cfgData no longer
+	// decides visibility (kept in the signature for existing callers).
+	_ = cfgData
+	return FindOSDItemPositionMask(osd, target, nil)
 }
 
 // LetterToBit converts a CONF_STR bit letter to a bit number.
@@ -1150,4 +1096,175 @@ func LetterToBit(c byte) int {
 		return int(c - '0')
 	}
 	return 0
+}
+
+// VisibleWithMask reports whether MiSTer main draws this row, given the OSD
+// mask the core reports (UIO_GET_OSDMASK).  menu.cpp: H<n> hides the row
+// when mask bit n is set, h<n> when it is clear.  D/d only grey a row out;
+// it keeps its cursor stop, so they do not affect visibility.
+func (m *MenuItem) VisibleWithMask(mask uint32) bool {
+	for _, c := range m.HideConditions {
+		if c.Type != "hide" || c.Bit < 0 || c.Bit > 31 {
+			continue
+		}
+		set := mask&(1<<uint(c.Bit)) != 0
+		if set != c.Inverted { // H and set, or h and clear
+			return false
+		}
+	}
+	return true
+}
+
+// MaskDependent reports whether the row has H/h conditions.
+func (m *MenuItem) MaskDependent() bool {
+	for _, c := range m.HideConditions {
+		if c.Type == "hide" {
+			return true
+		}
+	}
+	return false
+}
+
+// rowState: 1 shown, 0 hidden, -1 unknown (depends on an unknown mask).
+func rowState(it MenuItem, mask *uint32) int {
+	if !it.MaskDependent() {
+		return 1
+	}
+	if mask == nil {
+		return -1
+	}
+	if it.VisibleWithMask(*mask) {
+		return 1
+	}
+	return 0
+}
+
+func errMaskUnknown(target string, rows []string) error {
+	return fmt.Errorf("the OSD position of %q depends on rows the core shows or hides through its OSD mask (%s); "+
+		"MiSTer main reads that mask from the core and does not publish it -- pass osd_mask", target, strings.Join(rows, "; "))
+}
+
+// FindOSDItemPositionMask locates target in the OSD the way MiSTer main
+// draws it.  mask is the core's OSD mask (H/h conditions); nil means
+// unknown, and then any position that depends on a conditional row is
+// refused instead of guessed.  Top-level rows are counted from the top;
+// sub-pages are entered by counting up from the bottom of the top level,
+// so only rows on that path matter.
+func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItemLocation, error) {
+	items := ParseConfStr(osd.ConfStrRaw)
+	want := strings.ToLower(target)
+	matches := func(it MenuItem) bool {
+		return strings.ToLower(it.Name) == want || (it.Label != "" && strings.ToLower(it.Label) == want)
+	}
+
+	var top []MenuItem
+	for _, it := range items {
+		if isOSDTopLevelItem(it) {
+			top = append(top, it)
+		}
+	}
+
+	// Top level, counted from the top.
+	var unknown []string
+	pos := 0
+	for _, it := range top {
+		st := rowState(it, mask)
+		if it.Type != "sub_page" && matches(it) {
+			if st == 0 {
+				continue // a hidden twin; another row may carry the name
+			}
+			if st < 0 {
+				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, it.Raw))
+			}
+			if len(unknown) > 0 {
+				return OSDItemLocation{}, errMaskUnknown(target, unknown)
+			}
+			return OSDItemLocation{Position: pos, Item: it}, nil
+		}
+		switch st {
+		case 1:
+			pos++
+		case -1:
+			unknown = append(unknown, it.Raw)
+		}
+	}
+
+	// Sub-pages, in the order they appear.
+	for pi, page := range top {
+		if page.Type != "sub_page" {
+			continue
+		}
+		pst := rowState(page, mask)
+		if pst == 0 {
+			continue
+		}
+		var inPage []MenuItem
+		for _, it := range items {
+			if it.PageID == page.PageID && it.Type != "sub_page" && isOSDSubPageItem(it) {
+				inPage = append(inPage, it)
+			}
+		}
+		var unk []string
+		sub := 0
+		for _, it := range inPage {
+			st := rowState(it, mask)
+			if matches(it) {
+				if st == 0 {
+					continue
+				}
+				// Path: the page entry, every top-level row below it, the
+				// rows above the target inside the page.
+				var path []string
+				if pst < 0 {
+					path = append(path, page.Raw)
+				}
+				below := 0
+				for _, r := range top[pi+1:] {
+					switch rowState(r, mask) {
+					case 1:
+						below++
+					case -1:
+						path = append(path, r.Raw)
+					}
+				}
+				path = append(path, unk...)
+				if st < 0 {
+					path = append(path, it.Raw)
+				}
+				if len(path) > 0 {
+					return OSDItemLocation{}, errMaskUnknown(target, path)
+				}
+				// Top-level position of the page entry: informational only
+				// (navigation counts up from the bottom); -1 when rows
+				// above it are mask-dependent and the mask is unknown.
+				above := 0
+				for _, r := range top[:pi] {
+					if st := rowState(r, mask); st == 1 {
+						above++
+					} else if st < 0 {
+						above = -1
+						break
+					}
+				}
+				return OSDItemLocation{Position: sub, OnSubPage: true, PageID: page.PageID, PagePosition: above, BottomOffset: below, Item: it}, nil
+			}
+			switch st {
+			case 1:
+				sub++
+			case -1:
+				unk = append(unk, it.Raw)
+			}
+		}
+	}
+	return OSDItemLocation{}, fmt.Errorf("target %q not found in OSD menu for core %s", target, osd.CoreName)
+}
+
+// IsListedMenuItem reports whether a parsed item is a row of the menu (as
+// opposed to standalone H/D markers).
+func IsListedMenuItem(it MenuItem) bool {
+	switch it.Type {
+	case "hide", "hide_inverted", "disable", "disable_inverted":
+		return false
+	}
+	return true
 }

@@ -2,6 +2,7 @@ package mister
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -109,5 +110,75 @@ func TestCoreStatusNames(t *testing.T) {
 	s = CoreStatus{CoreName: "MSX1_20261004d_opl4regrd"}
 	if s.LookupName() != "MSX1" || s.CFGName() != "MSX1" {
 		t.Errorf("fallback: lookup=%q cfg=%q", s.LookupName(), s.CFGName())
+	}
+}
+
+// H/h on a row refer to the core's OSD mask (UIO_GET_OSDMASK, menu.cpp),
+// not to .CFG bits.  Hidden rows leave the cursor path; disabled rows stay
+// on it.  Without the mask a position that depends on such rows is unknown.
+const msx1NavSnippet = "MSX1;;" +
+	"H7H2O[19:17],SLOT A,ROM,SCC;" + // shown when mask bits 7 and 2 are clear
+	"H7h2O[19:17],SLOT A,ROM,FDC;" + // shown when bit 7 clear, bit 2 set
+	"O[71],SLOT A sub-slots,Off,On;" +
+	"-;O[43],Pause on OSD,No,Yes;" +
+	"DDO[48],Debug Overlay,Off,On;" + // disabled rows keep their cursor stop
+	"P1,Video settings;P1O[2:1],Aspect ratio,A,B;h2P1O[14:13],Video mode,AUTO,PAL;P1O[7:6],Scale,N,V;" +
+	"-;T[0],Reset;R[0],Reset and close OSD"
+
+func msx1NavOSD() *CoreOSD {
+	return &CoreOSD{CoreName: "MSX1", ConfStrRaw: msx1NavSnippet}
+}
+
+func u32(v uint32) *uint32 { return &v }
+
+func TestOSDPosition_UnknownMaskRefusesDependentRows(t *testing.T) {
+	_, err := FindOSDItemPositionMask(msx1NavOSD(), "Pause on OSD", nil)
+	if err == nil || !strings.Contains(err.Error(), "osd_mask") {
+		t.Fatalf("want refusal asking for osd_mask, got %v", err)
+	}
+	if _, err := FindOSDItemPositionMask(msx1NavOSD(), "SLOT A", nil); err == nil {
+		t.Error("ambiguous SLOT A accepted without a mask")
+	}
+}
+
+func TestOSDPosition_WithMask(t *testing.T) {
+	cases := []struct {
+		mask   uint32
+		target string
+		pos    int
+	}{
+		{0x000, "SLOT A", 0},        // first SLOT A row
+		{0x004, "SLOT A", 0},        // bit 2 set: the second SLOT A row is the visible one
+		{0x000, "Pause on OSD", 2},  // SLOT A, sub-slots, Pause
+		{0x080, "Pause on OSD", 1},  // bit 7 hides both SLOT A rows
+		{0x000, "Debug Overlay", 3}, // disabled or not, still a stop
+		{0x2000, "Debug Overlay", 3},
+	}
+	for _, c := range cases {
+		loc, err := FindOSDItemPositionMask(msx1NavOSD(), c.target, u32(c.mask))
+		if err != nil || loc.OnSubPage || loc.Position != c.pos {
+			t.Errorf("mask %#x %q: got %+v, %v; want top-level %d", c.mask, c.target, loc, err, c.pos)
+		}
+	}
+	if loc, err := FindOSDItemPositionMask(msx1NavOSD(), "SLOT A", u32(0x004)); err == nil && !strings.Contains(loc.Item.Raw, "FDC") {
+		t.Errorf("bit 2 set should pick the FDC row, got %q", loc.Item.Raw)
+	}
+}
+
+func TestOSDPosition_SubPageNeedsOnlyRowsOnItsPath(t *testing.T) {
+	// Sub-pages are reached bottom-up, so unknown rows above the page entry
+	// do not matter; a conditional row inside the page above the target does.
+	loc, err := FindOSDItemPositionMask(msx1NavOSD(), "Aspect ratio", nil)
+	if err != nil || !loc.OnSubPage || loc.Position != 0 || loc.BottomOffset != 2 {
+		t.Fatalf("Aspect ratio without mask: %+v %v", loc, err)
+	}
+	if _, err := FindOSDItemPositionMask(msx1NavOSD(), "Scale", nil); err == nil {
+		t.Error("Scale sits below a mask-dependent row in its page; want refusal")
+	}
+	for mask, pos := range map[uint32]int{0x000: 1, 0x004: 2} {
+		loc, err := FindOSDItemPositionMask(msx1NavOSD(), "Scale", u32(mask))
+		if err != nil || loc.Position != pos {
+			t.Errorf("Scale mask %#x: %+v %v, want %d", mask, loc, err, pos)
+		}
 	}
 }

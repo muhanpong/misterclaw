@@ -765,14 +765,14 @@ func OSDNavigateTo(coreName, target string) error {
 	if err != nil {
 		return err
 	}
-	cfgData, _ := ReadCFG(CFGPath(r.OSD.CoreName))
-	return OSDNavigateToOSD(r.OSD, cfgData, target)
+	return OSDNavigateToOSD(r.OSD, nil, target)
 }
 
 // OSDNavigateToOSD is OSDNavigateTo for an already resolved OSD description
-// (see ResolveRunningOSD).  cfgData is the core's .CFG contents.
-func OSDNavigateToOSD(osd *CoreOSD, cfgData []byte, target string) error {
-	loc, err := FindOSDItemPositionIn(osd, target, cfgData)
+// (see ResolveRunningOSD).  mask is the core's OSD mask if known (nil:
+// refuse positions that depend on mask-conditional rows).
+func OSDNavigateToOSD(osd *CoreOSD, mask *uint32, target string) error {
+	loc, err := FindOSDItemPositionMask(osd, target, mask)
 	if err != nil {
 		return err
 	}

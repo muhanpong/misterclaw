@@ -1007,11 +1007,19 @@ func cmdOSDInfo(args []string) error {
 }
 
 func cmdOSDVisible(args []string) error {
-	coreName, _ := extractFlag(args, "core", "c")
+	coreName, args := extractFlag(args, "core", "c")
+	maskStr, _ := extractFlag(args, "mask", "m")
 
 	req := map[string]interface{}{"mister": "osd_visible"}
 	if coreName != "" {
 		req["core"] = coreName
+	}
+	if maskStr != "" {
+		m, err := strconv.ParseUint(maskStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask: %v (decimal or 0x hex, 16 bits)", err)
+		}
+		req["osd_mask"] = m
 	}
 
 	resp, err := sendRequest(req)
@@ -1198,15 +1206,24 @@ func cmdRescan(args []string) error {
 }
 
 func cmdOSDNavigate(args []string) error {
+	maskStr, args := extractFlag(args, "mask", "m")
 	target := strings.Join(args, " ")
 	if target == "" {
-		return fmt.Errorf("usage: misterclaw-send osd-navigate <target>\nExample: misterclaw-send osd-navigate Reset")
+		return fmt.Errorf("usage: misterclaw-send osd-navigate [--mask=0xNNNN] <target>\nExample: misterclaw-send osd-navigate Reset")
 	}
-
-	resp, err := sendRequest(map[string]interface{}{
+	req := map[string]interface{}{
 		"mister": "osd_navigate",
 		"target": target,
-	})
+	}
+	if maskStr != "" {
+		m, err := strconv.ParseUint(maskStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask: %v (decimal or 0x hex, 16 bits)", err)
+		}
+		req["osd_mask"] = m
+	}
+
+	resp, err := sendRequest(req)
 	if err != nil {
 		return err
 	}

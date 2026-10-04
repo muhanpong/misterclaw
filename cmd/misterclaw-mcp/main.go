@@ -264,11 +264,12 @@ func toolsList() []ToolDef {
 		},
 		{
 			Name:        "mister_osd_visible",
-			Description: "Get only the visible OSD menu items for the current core, based on the current CFG state. This shows exactly what the user would see on screen — items hidden by H/h flags are filtered out. Use this instead of osd_info when you want to know what options are actually available right now.",
+			Description: "Get the OSD menu items the current core shows. Rows with H/h flags are shown or hidden by the core's OSD mask, which MiSTer main reads from the core and does not publish: pass osd_mask to resolve them, otherwise they are listed separately as mask-dependent. Use this instead of osd_info when you want to know what options are actually available right now.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"core": map[string]interface{}{"type": "string", "description": "Core name. If omitted, uses the currently loaded core."},
+					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
 				},
 			},
 		},
@@ -314,12 +315,13 @@ func toolsList() []ToolDef {
 		},
 		{
 			Name:        "mister_osd_navigate",
-			Description: "Navigate to a specific OSD menu item by name (experimental — not yet reliable for all cores). Opens the OSD (F12) and navigates to the target item using conf_str-based position calculation. Works for Reset, options, file mounts, triggers etc. Uses the currently loaded core. Note: cores with runtime-hidden items may cause incorrect positioning.",
+			Description: "Navigate to a specific OSD menu item by name (experimental — not yet reliable for all cores). Opens the OSD (F12) and navigates to the target item using conf_str-based position calculation. Works for Reset, options, file mounts, triggers etc. Uses the currently loaded core, resolved by exact name or by a per-build CONF_STR file. If the target's row position depends on rows the core hides through its OSD mask and osd_mask is not given, the request is refused rather than pressing keys on a guessed row.",
 			InputSchema: map[string]interface{}{
 				"type":     "object",
 				"required": []string{"target"},
 				"properties": map[string]interface{}{
 					"target": map[string]interface{}{"type": "string", "description": "Menu item name to navigate to (e.g. 'Reset', 'FDD0', 'Aspect ratio')"},
+					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
 				},
 			},
 		},
@@ -446,6 +448,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		if v, ok := args["core"].(string); ok && v != "" {
 			req["core"] = v
 		}
+		if m, ok := osdMaskArg(args); ok {
+			req["osd_mask"] = m
+		}
 		return doMisterCommand(req, formatOSDVisible)
 
 	case "mister_cfg_read":
@@ -486,6 +491,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		req := map[string]interface{}{
 			"mister": "osd_navigate",
 			"target": target,
+		}
+		if m, ok := osdMaskArg(args); ok {
+			req["osd_mask"] = m
 		}
 		return doMisterCommand(req, formatOSDNavigate)
 
@@ -872,8 +880,27 @@ func formatOSDVisible(resp map[string]interface{}) MCPToolResult {
 			sb.WriteString(fmt.Sprintf("  %s: %s\n", typ, name))
 		}
 	}
+	if dep, _ := resp["mask_dependent"].([]interface{}); len(dep) > 0 {
+		sb.WriteString("\nShown or hidden by the core's OSD mask (pass osd_mask to resolve):\n")
+		for _, m := range dep {
+			if item, ok := m.(map[string]interface{}); ok {
+				raw, _ := item["raw"].(string)
+				sb.WriteString(fmt.Sprintf("  %s\n", raw))
+			}
+		}
+	}
 
 	return textResult(sb.String())
+}
+
+// osdMaskArg reads the optional osd_mask tool argument (JSON numbers
+// arrive as float64).
+func osdMaskArg(args map[string]interface{}) (uint32, bool) {
+	v, ok := args["osd_mask"].(float64)
+	if !ok || v < 0 || v > 0xFFFF || v != float64(uint32(v)) {
+		return 0, false
+	}
+	return uint32(v), true
 }
 
 func formatCFGRead(resp map[string]interface{}) MCPToolResult {
@@ -889,7 +916,8 @@ func formatCFGRead(resp map[string]interface{}) MCPToolResult {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Core: %s\nCFG: %s\nHex: %s\n\nOptions:\n", coreName, cfgPath, cfgHex))
 
-	options, _ := resp["options"].([]interface{})
+	// The server reports options under "settings".
+	options, _ := resp["settings"].([]interface{})
 	for _, o := range options {
 		opt, ok := o.(map[string]interface{})
 		if !ok {

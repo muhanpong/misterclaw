@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -365,5 +366,32 @@ func TestFullRoundTrip(t *testing.T) {
 	tools, _ := result["tools"].([]interface{})
 	if len(tools) != 17 {
 		t.Errorf("expected 17 tools, got %d", len(tools))
+	}
+}
+
+func TestFormatCFGRead_ListsServerSettings(t *testing.T) {
+	// The server reports options under "settings"; the formatter used to read
+	// "options" and always printed an empty list.
+	resp := map[string]interface{}{
+		"success": true, "core_name": "MSX1", "cfg_path": "/media/fat/config/MSX1.CFG", "cfg_hex": "00",
+		"settings": []interface{}{map[string]interface{}{"name": "MoonSound", "value": float64(1), "value_name": "On"}},
+	}
+	out := formatCFGRead(resp)
+	if len(out.Content) == 0 || !strings.Contains(out.Content[0].Text, "MoonSound") {
+		t.Errorf("settings not listed: %+v", out)
+	}
+}
+
+func TestOSDMaskArg(t *testing.T) {
+	cases := []struct {
+		in   interface{}
+		want uint32
+		ok   bool
+	}{{float64(0x84), 0x84, true}, {float64(-1), 0, false}, {float64(70000), 0, false}, {1.5, 0, false}, {"0x84", 0, false}}
+	for _, c := range cases {
+		got, ok := osdMaskArg(map[string]interface{}{"osd_mask": c.in})
+		if got != c.want || ok != c.ok {
+			t.Errorf("osdMaskArg(%v) = %v,%v want %v,%v", c.in, got, ok, c.want, c.ok)
+		}
 	}
 }

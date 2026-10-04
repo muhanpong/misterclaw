@@ -66,6 +66,10 @@ type Request struct {
 
 	// OSD navigation
 	Target string `json:"target,omitempty"`
+	// The core's OSD mask (the H/h row conditions), when the caller knows
+	// it.  MiSTer main does not publish it; without it, positions that
+	// depend on conditional rows are refused.
+	OSDMask *uint32 `json:"osd_mask,omitempty"`
 
 	// CFG commands
 	Option   string `json:"option,omitempty"`
@@ -792,7 +796,7 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 			return
 		}
 		coreName := ctx.OSD.CoreName
-		if err := mister.OSDNavigateToOSD(ctx.OSD, ctx.CFGData, target); err != nil {
+		if err := mister.OSDNavigateToOSD(ctx.OSD, req.OSDMask, target); err != nil {
 			send(map[string]interface{}{
 				"mister":  "osd_navigate",
 				"success": false,
@@ -896,12 +900,12 @@ func (s *Server) handleRescan(req Request, send func(interface{})) {
 type coreContext struct {
 	OSD       *mister.CoreOSD
 	OSDSource string // "sidecar", "database" or "database-fuzzy"
-	CFGData []byte
-	CFGPath string
-	MRAPath string // empty if not arcade
-	MRA     *mister.MRA
-	DIPData []byte // nil if no MRA/DIP switches
-	DIPPath string // empty if no MRA
+	CFGData   []byte
+	CFGPath   string
+	MRAPath   string // empty if not arcade
+	MRA       *mister.MRA
+	DIPData   []byte // nil if no MRA/DIP switches
+	DIPPath   string // empty if no MRA
 }
 
 // resolveCore resolves the current core's OSD info, CFG file, and DIP file.
@@ -981,10 +985,10 @@ func (s *Server) resolveCore(req Request, send func(interface{}), strict bool) (
 	ctx := &coreContext{
 		OSD:       osd,
 		OSDSource: res.Source,
-		CFGData: cfgData,
-		CFGPath: cfgPath,
-		MRAPath: mraPath,
-		MRA:     mra,
+		CFGData:   cfgData,
+		CFGPath:   cfgPath,
+		MRAPath:   mraPath,
+		MRA:       mra,
 	}
 
 	// Load DIP data if this is an arcade game with an MRA
@@ -1003,14 +1007,36 @@ func (s *Server) handleOSDVisible(req Request, send func(interface{})) {
 		return
 	}
 
-	visible := mister.VisibleMenu(ctx.OSD, ctx.CFGData)
-	send(map[string]interface{}{
+	// Row visibility (H/h) follows the core's OSD mask, not .CFG bits.
+	// Without the mask, list the conditional rows separately.
+	var visible, dependent []mister.MenuItem
+	for _, it := range ctx.OSD.Menu {
+		if !mister.IsListedMenuItem(it) {
+			continue
+		}
+		switch {
+		case req.OSDMask != nil:
+			if it.VisibleWithMask(*req.OSDMask) {
+				visible = append(visible, it)
+			}
+		case it.MaskDependent():
+			dependent = append(dependent, it)
+		default:
+			visible = append(visible, it)
+		}
+	}
+	resp := map[string]interface{}{
 		"mister":     "osd_visible",
 		"success":    true,
 		"core_name":  ctx.OSD.CoreName,
 		"osd_source": ctx.OSDSource,
-		"menu":      visible,
-	})
+		"menu":       visible,
+	}
+	if req.OSDMask == nil && len(dependent) > 0 {
+		resp["mask_dependent"] = dependent
+		resp["note"] = "rows in mask_dependent are shown or hidden by the core's OSD mask; pass osd_mask to resolve them"
+	}
+	send(resp)
 }
 
 func (s *Server) handleCFGRead(req Request, send func(interface{})) {
@@ -1067,10 +1093,10 @@ func (s *Server) handleCFGRead(req Request, send func(interface{})) {
 		"success":    true,
 		"core_name":  ctx.OSD.CoreName,
 		"osd_source": ctx.OSDSource,
-		"cfg_path":  ctx.CFGPath,
-		"cfg_hex":   hex.EncodeToString(ctx.CFGData),
-		"cfg_size":  len(ctx.CFGData),
-		"settings":  settings,
+		"cfg_path":   ctx.CFGPath,
+		"cfg_hex":    hex.EncodeToString(ctx.CFGData),
+		"cfg_size":   len(ctx.CFGData),
+		"settings":   settings,
 	}
 	if ctx.DIPPath != "" {
 		resp["dip_path"] = ctx.DIPPath
