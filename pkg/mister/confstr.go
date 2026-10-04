@@ -1077,6 +1077,12 @@ func FindOSDItemPosition(db *ConfStrDB, coreName, target string, cfgData []byte)
 	if osd == nil {
 		return OSDItemLocation{}, fmt.Errorf("core not found in confstr db: %s", coreName)
 	}
+	return FindOSDItemPositionIn(osd, target, cfgData)
+}
+
+// FindOSDItemPositionIn is FindOSDItemPosition for a resolved OSD.
+func FindOSDItemPositionIn(osd *CoreOSD, target string, cfgData []byte) (OSDItemLocation, error) {
+	coreName := osd.CoreName
 
 	// Re-parse from raw for most accurate menu structure
 	items := ParseConfStr(osd.ConfStrRaw)

@@ -760,10 +760,19 @@ func OSDNavigateTo(coreName, target string) error {
 	if err != nil {
 		return fmt.Errorf("loading confstr db: %w", err)
 	}
+	// Key presses land on whatever row the count says: exact names only.
+	r, err := ResolveNamedOSD(db, coreName, true)
+	if err != nil {
+		return err
+	}
+	cfgData, _ := ReadCFG(CFGPath(r.OSD.CoreName))
+	return OSDNavigateToOSD(r.OSD, cfgData, target)
+}
 
-	// Read core CFG to determine which items are visible
-	cfgData, _ := ReadCFG(CFGPath(NormalizeCoreName(coreName)))
-	loc, err := FindOSDItemPosition(db, coreName, target, cfgData)
+// OSDNavigateToOSD is OSDNavigateTo for an already resolved OSD description
+// (see ResolveRunningOSD).  cfgData is the core's .CFG contents.
+func OSDNavigateToOSD(osd *CoreOSD, cfgData []byte, target string) error {
+	loc, err := FindOSDItemPositionIn(osd, target, cfgData)
 	if err != nil {
 		return err
 	}

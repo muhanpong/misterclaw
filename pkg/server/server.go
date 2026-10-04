@@ -716,6 +716,7 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 		}
 
 	case "osd_info":
+		var running *mister.CoreStatus
 		coreName := req.Core
 		if coreName == "" {
 			// Use currently running core
@@ -724,6 +725,7 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 				send(map[string]interface{}{"error": "no core specified and " + err.Error()})
 				return
 			}
+			running = status
 			coreName = status.LookupName()
 		}
 
@@ -737,19 +739,26 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 			return
 		}
 
-		osd := mister.LookupCoreOSD(db, coreName)
-		if osd == nil {
+		var res *mister.ResolvedOSD
+		if running != nil {
+			res, err = mister.ResolveRunningOSD(db, running, false)
+		} else {
+			res, err = mister.ResolveNamedOSD(db, coreName, false)
+		}
+		if err != nil {
 			send(map[string]interface{}{
 				"mister":  "osd_info",
 				"success": false,
-				"error":   fmt.Sprintf("no OSD info found for core: %s", coreName),
+				"error":   err.Error(),
 			})
 			return
 		}
+		osd := res.OSD
 
 		send(map[string]interface{}{
 			"mister":       "osd_info",
 			"success":      true,
+			"osd_source":   res.Source,
 			"core_name":    osd.CoreName,
 			"repo":         osd.Repo,
 			"conf_str_raw": osd.ConfStrRaw,
@@ -777,16 +786,13 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 			send(map[string]interface{}{"error": "osd_navigate requires target"})
 			return
 		}
-		coreName := req.Core
-		if coreName == "" {
-			status, err := mister.GetRunningCore()
-			if err != nil {
-				send(map[string]interface{}{"error": "no core specified and " + err.Error()})
-				return
-			}
-			coreName = status.LookupName()
+		// Resolve strictly: a wrong layout means key presses on the wrong rows.
+		ctx, ok := s.resolveCore(req, send, true)
+		if !ok {
+			return
 		}
-		if err := mister.OSDNavigateTo(coreName, target); err != nil {
+		coreName := ctx.OSD.CoreName
+		if err := mister.OSDNavigateToOSD(ctx.OSD, ctx.CFGData, target); err != nil {
 			send(map[string]interface{}{
 				"mister":  "osd_navigate",
 				"success": false,
@@ -888,7 +894,8 @@ func (s *Server) handleRescan(req Request, send func(interface{})) {
 }
 
 type coreContext struct {
-	OSD     *mister.CoreOSD
+	OSD       *mister.CoreOSD
+	OSDSource string // "sidecar", "database" or "database-fuzzy"
 	CFGData []byte
 	CFGPath string
 	MRAPath string // empty if not arcade
@@ -898,17 +905,21 @@ type coreContext struct {
 }
 
 // resolveCore resolves the current core's OSD info, CFG file, and DIP file.
-func (s *Server) resolveCore(req Request, send func(interface{})) (*coreContext, bool) {
+// strict (writes, OSD navigation) accepts exact name matches or a per-build
+// sidecar only; read-only callers may fall back to similar names.
+func (s *Server) resolveCore(req Request, send func(interface{}), strict bool) (*coreContext, bool) {
 	coreName := req.Core
 	cfgName := ""
 	mraPath := ""
 	var mra *mister.MRA
+	var running *mister.CoreStatus
 	if coreName == "" {
 		status, err := mister.GetRunningCore()
 		if err != nil {
 			send(map[string]interface{}{"error": "no core specified and " + err.Error()})
 			return nil, false
 		}
+		running = status
 		coreName = status.LookupName()
 		// CFG name: what MiSTer main itself uses (/tmp/CORENAME) when known.
 		// Otherwise it comes from the game (MRA), not the core.
@@ -948,11 +959,17 @@ func (s *Server) resolveCore(req Request, send func(interface{})) (*coreContext,
 		return nil, false
 	}
 
-	osd := mister.LookupCoreOSD(db, coreName)
-	if osd == nil {
-		send(map[string]interface{}{"error": fmt.Sprintf("no OSD info found for core: %s", coreName)})
+	var res *mister.ResolvedOSD
+	if running != nil {
+		res, err = mister.ResolveRunningOSD(db, running, strict)
+	} else {
+		res, err = mister.ResolveNamedOSD(db, coreName, strict)
+	}
+	if err != nil {
+		send(map[string]interface{}{"error": err.Error()})
 		return nil, false
 	}
+	osd := res.OSD
 
 	cfgPath := mister.CFGPath(cfgName)
 	cfgData, err := mister.ReadCFG(cfgPath)
@@ -962,7 +979,8 @@ func (s *Server) resolveCore(req Request, send func(interface{})) (*coreContext,
 	}
 
 	ctx := &coreContext{
-		OSD:     osd,
+		OSD:       osd,
+		OSDSource: res.Source,
 		CFGData: cfgData,
 		CFGPath: cfgPath,
 		MRAPath: mraPath,
@@ -980,22 +998,23 @@ func (s *Server) resolveCore(req Request, send func(interface{})) (*coreContext,
 }
 
 func (s *Server) handleOSDVisible(req Request, send func(interface{})) {
-	ctx, ok := s.resolveCore(req, send)
+	ctx, ok := s.resolveCore(req, send, false)
 	if !ok {
 		return
 	}
 
 	visible := mister.VisibleMenu(ctx.OSD, ctx.CFGData)
 	send(map[string]interface{}{
-		"mister":    "osd_visible",
-		"success":   true,
-		"core_name": ctx.OSD.CoreName,
+		"mister":     "osd_visible",
+		"success":    true,
+		"core_name":  ctx.OSD.CoreName,
+		"osd_source": ctx.OSDSource,
 		"menu":      visible,
 	})
 }
 
 func (s *Server) handleCFGRead(req Request, send func(interface{})) {
-	ctx, ok := s.resolveCore(req, send)
+	ctx, ok := s.resolveCore(req, send, false)
 	if !ok {
 		return
 	}
@@ -1044,9 +1063,10 @@ func (s *Server) handleCFGRead(req Request, send func(interface{})) {
 	}
 
 	resp := map[string]interface{}{
-		"mister":    "cfg_read",
-		"success":   true,
-		"core_name": ctx.OSD.CoreName,
+		"mister":     "cfg_read",
+		"success":    true,
+		"core_name":  ctx.OSD.CoreName,
+		"osd_source": ctx.OSDSource,
 		"cfg_path":  ctx.CFGPath,
 		"cfg_hex":   hex.EncodeToString(ctx.CFGData),
 		"cfg_size":  len(ctx.CFGData),
@@ -1069,7 +1089,7 @@ func (s *Server) handleCFGWrite(req Request, send func(interface{})) {
 		return
 	}
 
-	ctx, ok := s.resolveCore(req, send)
+	ctx, ok := s.resolveCore(req, send, true)
 	if !ok {
 		return
 	}
