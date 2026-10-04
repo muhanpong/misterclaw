@@ -109,6 +109,13 @@ var systemDefaults = map[string]SystemConfig{
 		{Type: "s", Index: 0, Extensions: []string{".d64"}, PostLaunchCombo: []string{"leftalt", "esc"}, DelayMs: 8000},
 	}},
 	"AtariST":     {Core: "_Computer/AtariST", Delay: 1, Type: "s", Index: 0, Extensions: []string{".st", ".msa", ".stx"}},
+	// muhanpong/MSX1_MiSTer: FS3 = slot A ROM, F4 = slot B, S5 = floppy (shown
+	// only with an FDC), SC4 = SD card VHD.  Launching restarts the core;
+	// to change a disk while a program runs use the OSD mount instead.
+	"MSX1": {Core: "_Computer/MSX1", Delay: 2, Type: "f", Index: 3, Extensions: []string{".rom", ".dsk", ".vhd"}, PostLaunch: &PostLaunchConfig{Notes: "MSX1 core (muhanpong). .rom goes to slot A (needs SLOT A = ROM, not expanded), .dsk to drive A: (needs a machine pack with an FDC), .vhd to the SD card. A launch restarts the core: to change disks mid-game use mister_mount (\"Mount Drive A:\" / \"Load SD card\"). Machine packs (.MSX) are not games: load them with OSD \"Load ROM PACK\"."}, FormatOverrides: []FormatOverride{
+		{Type: "s", Index: 5, Extensions: []string{".dsk"}},
+		{Type: "s", Index: 4, Extensions: []string{".vhd"}},
+	}},
 	"MSX":         {Core: "_Computer/MSX", Delay: 1, Type: "f", Index: 1, Extensions: []string{".rom", ".mx1", ".mx2"}},
 	"ZXSpectrum":  {Core: "_Computer/ZX-Spectrum", Delay: 1, Type: "f", Index: 1, Extensions: []string{".tap", ".tzx", ".z80", ".sna"}},
 	"ZX81":        {Core: "_Computer/ZX81", Delay: 1, Type: "f", Index: 1, Extensions: []string{".p", ".0"}},
@@ -367,6 +374,11 @@ func LaunchGame(game GameInfo) error {
 	mglContent := GenerateMGL(game)
 	if mglContent == "" {
 		return fmt.Errorf("unknown system: %s", game.System)
+	}
+	if game.System == "MSX1" {
+		if err := checkMSX1Launch(game.Path); err != nil {
+			return err
+		}
 	}
 
 	// Place MGL in core's parent dir so OSD browser has correct context

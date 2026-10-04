@@ -227,3 +227,34 @@ func InferMSX1Mask(cfg []byte, pack *MSX1PackInfo) (OSDMask, []string) {
 	notes = append(notes, "bit 6 (SRAM sizes) and bit 15 (MT32-pi answering) are not inferred")
 	return m, notes
 }
+
+// MSX1CFGPath is the MSX1 core's saved status (var for tests).
+var MSX1CFGPath = "/media/fat/config/MSX1.CFG"
+
+// checkMSX1Launch refuses an MGL launch MiSTer main would drop silently:
+// an MGL file item only binds to an F/S row that is drawn (menu.cpp sets
+// the item's submenu inside the "!h && inpage" branch), otherwise the MGL
+// is deactivated after the core has already restarted.
+func checkMSX1Launch(path string) error {
+	cfg, err := os.ReadFile(MSX1CFGPath)
+	if err != nil {
+		return nil // no saved status: defaults, nothing to check against
+	}
+	pack, _ := LoadMSX1MachinePack()
+	m, _ := InferMSX1Mask(cfg, pack)
+	known := func(bit int) (set, ok bool) { return m.Value&(1<<uint(bit)) != 0, m.Known&(1<<uint(bit)) != 0 }
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".rom":
+		if v, ok := known(7); ok && v {
+			return fmt.Errorf("MSX1: slot A is expanded (sub-slots On), so its ROM row is on the sub-slot page and an MGL cannot reach it; load the ROM through the OSD (mister_mount target \"Load\")")
+		}
+		if v, ok := known(3); ok && v {
+			return fmt.Errorf("MSX1: SLOT A is not set to ROM, so there is no slot A ROM row for the MGL to use; set SLOT A = ROM first (mister_cfg_write)")
+		}
+	case ".dsk":
+		if v, ok := known(1); ok && !v {
+			return fmt.Errorf("MSX1: the machine pack has no floppy controller, so the \"Mount Drive A:\" row is hidden")
+		}
+	}
+	return nil
+}

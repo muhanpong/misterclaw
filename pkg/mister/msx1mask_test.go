@@ -145,3 +145,35 @@ func TestOSDPosition_PartialMask(t *testing.T) {
 		t.Errorf("bit 7 set: %+v %v, want top-down 1", loc, err)
 	}
 }
+
+func TestCheckMSX1Launch(t *testing.T) {
+	dir := t.TempDir()
+	oldC, oldP := MSX1CFGPath, MSX1PackRecordPath
+	MSX1CFGPath, MSX1PackRecordPath = filepath.Join(dir, "MSX1.CFG"), filepath.Join(dir, "MSX1.f1")
+	t.Cleanup(func() { MSX1CFGPath, MSX1PackRecordPath = oldC, oldP })
+
+	// Slot A = SCC (1): no slot A ROM row -> refuse .rom
+	os.WriteFile(MSX1CFGPath, cfgWith(map[[2]int]int{{17, 19}: 1}), 0644)
+	if err := checkMSX1Launch("/x/game.rom"); err == nil || !strings.Contains(err.Error(), "SLOT A") {
+		t.Errorf("slot A SCC: want refusal, got %v", err)
+	}
+	// Slot A expanded -> refuse .rom
+	os.WriteFile(MSX1CFGPath, cfgWith(map[[2]int]int{{71, 71}: 1}), 0644)
+	if err := checkMSX1Launch("/x/game.rom"); err == nil || !strings.Contains(err.Error(), "expanded") {
+		t.Errorf("expanded: want refusal, got %v", err)
+	}
+	// Slot A = ROM -> fine; .dsk with a pack without FDC -> refuse
+	os.WriteFile(MSX1CFGPath, cfgWith(nil), 0644)
+	if err := checkMSX1Launch("/x/game.rom"); err != nil {
+		t.Errorf("slot A ROM: %v", err)
+	}
+	pack := writePack(t, 1, false, false)
+	os.WriteFile(MSX1PackRecordPath, []byte(pack), 0644)
+	if err := checkMSX1Launch("/x/disk.dsk"); err == nil || !strings.Contains(err.Error(), "floppy") {
+		t.Errorf("no FDC: want refusal, got %v", err)
+	}
+	os.WriteFile(MSX1PackRecordPath, []byte(writePack(t, 1, true, false)), 0644)
+	if err := checkMSX1Launch("/x/disk.dsk"); err != nil {
+		t.Errorf("FDC pack: %v", err)
+	}
+}
