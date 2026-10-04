@@ -121,9 +121,12 @@ func parseMenuItem(entry string) *MenuItem {
 		return nil
 	}
 
-	// Separator line
+	// Separator line, or a non-selectable text row ("-,text")
 	if entry == "-" {
 		return &MenuItem{Type: "separator", Raw: entry}
+	}
+	if strings.HasPrefix(entry, "-,") {
+		return &MenuItem{Type: "separator", Raw: entry, Name: entry[2:]}
 	}
 
 	// DIP switch block
@@ -208,7 +211,8 @@ func isValidCommandStart(entry string) bool {
 	case 'F':
 		return second >= '0' && second <= '9' || second == 'C' || second == 'S' || second == ','
 	case 'S':
-		return second >= '0' && second <= '9' || second == ','
+		// SC<n> = mount whose image is remembered across sessions
+		return second >= '0' && second <= '9' || second == ',' || second == 'C'
 	case 'P':
 		return second >= '0' && second <= '9'
 	case 'R':
@@ -296,7 +300,10 @@ func parseTrigger(raw, rest string, hidden bool) *MenuItem {
 	bit := 0
 	name := ""
 	if len(parts) >= 1 {
-		if b, err := strconv.Atoi(parts[0]); err == nil {
+		if strings.HasPrefix(parts[0], "[") {
+			// Bracket syntax T[44] (bits above 31 can only be written this way)
+			bit, _ = parseBitRange(parts[0])
+		} else if b, err := strconv.Atoi(parts[0]); err == nil {
 			bit = b
 		}
 	}
@@ -323,8 +330,11 @@ func parseFileLoad(raw, rest string) *MenuItem {
 		typ = "mount"
 	}
 
-	// Check for FC (core-selecting file load) or FS (file load with storage slot)
-	if len(rest) > 0 && rest[0] == 'C' {
+	// SC<n>: mount with the remembered-image flag; still a mount row
+	if typ == "mount" && len(rest) > 0 && rest[0] == 'C' {
+		rest = rest[1:]
+	} else if len(rest) > 0 && rest[0] == 'C' {
+		// FC = core-selecting file load
 		typ = "file_load_core"
 		rest = rest[1:]
 	} else if len(rest) > 0 && rest[0] == 'S' {
@@ -526,8 +536,9 @@ func parseHideDisable(raw, rest, typ string, inverted bool) *MenuItem {
 
 	remaining := rest[i:]
 
-	// If remaining starts with a command letter (O, T, etc.), parse the inner item
-	if len(remaining) > 0 && isCommandPrefix(remaining[0]) {
+	// If remaining starts with a command letter (O, T, etc.) or is a
+	// separator/text row ("-", "-,text"), parse the inner item
+	if len(remaining) > 0 && (isCommandPrefix(remaining[0]) || remaining[0] == '-') {
 		inner := parseMenuItem(remaining)
 		if inner != nil {
 			inner.Raw = raw // preserve original raw including H/D prefix
