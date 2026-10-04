@@ -337,6 +337,16 @@ func toolsList() []ToolDef {
 			},
 		},
 		{
+			Name:        "mister_msx1_overlay",
+			Description: "MSX1 core: read the debug overlay (the strip on the left with Debug Overlay = On) from a screenshot and return every row as a number: LIVE PC (row 9), the A8 slot-write ring, PPI state, RST 38 spin count, who jumped to 0000, VDP probes, CPU WAIT ratio and more. Row meanings depend on the core build; see the msx1-debug-overlay skill before quoting a row. With toggle=true an overlay that is off is switched on for the reading and off again (two OSD navigations).",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"toggle": map[string]interface{}{"type": "boolean", "description": "If the overlay is off, switch it on for the reading and off afterwards."},
+				},
+			},
+		},
+		{
 			Name:        "mister_mount",
 			Description: "Load or mount a file into the running core through its OSD, without restarting it (e.g. change the floppy of a multi-disk game, swap a VHD, load a ROM into a slot). Navigates to the named F/S row, opens MiSTer's file browser and walks it to the path, checking each step. Requires log_file_entry=1 in MiSTer.ini (a section for the core is enough); without it the request is refused before any file is chosen. Only file load / mount rows are accepted.",
 			InputSchema: map[string]interface{}{
@@ -509,6 +519,13 @@ func callTool(params json.RawMessage) MCPToolResult {
 			req["osd_mask"] = m
 		}
 		return doMisterCommand(req, formatOSDNavigate)
+
+	case "mister_msx1_overlay":
+		req := map[string]interface{}{"mister": "msx1_overlay"}
+		if v, ok := args["toggle"].(bool); ok && v {
+			req["toggle"] = true
+		}
+		return doMisterCommand(req, formatMSX1Overlay)
 
 	case "mister_mount":
 		target, _ := args["target"].(string)
@@ -1123,4 +1140,29 @@ func formatMount(resp map[string]interface{}) MCPToolResult {
 	path, _ := resp["path"].(string)
 	target, _ := resp["target"].(string)
 	return textResult(fmt.Sprintf("Selected %s via OSD row %q (file browser reported \"selected\")", path, target))
+}
+
+func formatMSX1Overlay(resp map[string]interface{}) MCPToolResult {
+	if success, ok := resp["success"].(bool); ok && !success {
+		errMsg, _ := resp["error"].(string)
+		return errorResult(errMsg)
+	}
+	ov, _ := resp["overlay"].(map[string]interface{})
+	var sb strings.Builder
+	if t, _ := resp["toggled"].(bool); t {
+		sb.WriteString("(overlay was off: switched on for this reading and off again)\n")
+	}
+	if n, _ := ov["note"].(string); n != "" {
+		sb.WriteString(n + "\n")
+	}
+	rows, _ := ov["rows"].([]interface{})
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		idx, _ := m["row"].(float64)
+		hex, _ := m["hex"].(string)
+		label, _ := m["label"].(string)
+		bar, _ := m["bar_pct"].(float64)
+		sb.WriteString(fmt.Sprintf("%2d  %-8s  bar %3.0f%%  %s\n", int(idx), hex, bar, label))
+	}
+	return textResult(sb.String())
 }

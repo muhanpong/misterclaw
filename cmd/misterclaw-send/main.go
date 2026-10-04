@@ -106,6 +106,8 @@ func main() {
 		err = cmdOSDNavigate(cmdArgs)
 	case "mount":
 		err = cmdMount(cmdArgs)
+	case "msx1-overlay":
+		err = cmdMSX1Overlay(cmdArgs)
 	case "system-info":
 		err = cmdSystemInfo(cmdArgs)
 	case "discover":
@@ -1646,5 +1648,34 @@ func cmdMount(args []string) error {
 		return fmt.Errorf("%v (browser: %v)", resp["error"], resp["browser"])
 	}
 	fmt.Printf("Selected: %v\n", resp["path"])
+	return nil
+}
+
+
+// cmdMSX1Overlay: misterclaw-send msx1-overlay [--toggle]
+func cmdMSX1Overlay(args []string) error {
+	req := map[string]interface{}{"mister": "msx1_overlay"}
+	for _, a := range args {
+		if a == "--toggle" || a == "-t" {
+			req["toggle"] = true
+		}
+	}
+	resp, err := sendRequest(req)
+	if err != nil {
+		return err
+	}
+	if jsonFlag {
+		outputJSON(resp)
+		return nil
+	}
+	if ok, _ := resp["success"].(bool); !ok {
+		return fmt.Errorf("%v", resp["error"])
+	}
+	ov, _ := resp["overlay"].(map[string]interface{})
+	rows, _ := ov["rows"].([]interface{})
+	for _, r := range rows {
+		m, _ := r.(map[string]interface{})
+		fmt.Printf("%2.0f  %-8v  %3.0f%%  %v\n", m["row"], m["hex"], m["bar_pct"], m["label"])
+	}
 	return nil
 }

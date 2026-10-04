@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -71,6 +72,8 @@ type Request struct {
 	// it.  MiSTer main does not publish it; without it, positions that
 	// depend on conditional rows are refused.
 	OSDMask *uint32 `json:"osd_mask,omitempty"`
+	// msx1_overlay: turn Debug Overlay on for the reading and off again
+	Toggle bool `json:"toggle,omitempty"`
 
 	// CFG commands
 	Option   string `json:"option,omitempty"`
@@ -818,6 +821,9 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 	case "mount":
 		s.handleMount(req, send)
 
+	case "msx1_overlay":
+		s.handleMSX1Overlay(req, send)
+
 	case "system_info":
 		system := req.System
 		if system == "" {
@@ -1298,4 +1304,66 @@ func (s *Server) handleMount(req Request, send func(interface{})) {
 		"browser":  st,
 		"osd_mask": maskInfo,
 	})
+}
+
+
+// handleMSX1Overlay takes a screenshot and decodes the MSX1 core's debug
+// overlay rows.  With toggle, an overlay that is off is switched on for the
+// reading (OSD "Debug Overlay" + Enter) and off again afterwards.
+func (s *Server) handleMSX1Overlay(req Request, send func(interface{})) {
+	fail := func(msg string) {
+		send(map[string]interface{}{"mister": "msx1_overlay", "success": false, "error": msg})
+	}
+	shot := func() (*mister.MSX1Overlay, error) {
+		res, err := mister.TakeScreenshotAndCapture(5 * time.Second)
+		if err != nil {
+			return nil, err
+		}
+		data, err := base64.StdEncoding.DecodeString(res.Data)
+		if err != nil {
+			return nil, err
+		}
+		return mister.DecodeMSX1Overlay(data)
+	}
+	ov, err := shot()
+	toggled := false
+	if err != nil && req.Toggle && strings.Contains(err.Error(), "no MSX1 debug overlay") {
+		ctx, ok := s.resolveCore(req, send, true)
+		if !ok {
+			return
+		}
+		if ctx.OSD.CoreName != "MSX1" {
+			fail("msx1_overlay is for the MSX1 core")
+			return
+		}
+		flip := func() error {
+			mask, _ := osdMaskFor(req, ctx)
+			if err := mister.OSDNavigateToOSD(ctx.OSD, mask, "Debug Overlay"); err != nil {
+				return err
+			}
+			for _, k := range []string{"enter", "f12"} {
+				time.Sleep(400 * time.Millisecond)
+				if err := mister.PressKey(k); err != nil {
+					return err
+				}
+			}
+			time.Sleep(800 * time.Millisecond)
+			return nil
+		}
+		if err := flip(); err != nil {
+			fail("turning Debug Overlay on: " + err.Error())
+			return
+		}
+		toggled = true
+		ov, err = shot()
+		if ferr := flip(); ferr != nil {
+			fail(fmt.Sprintf("read %v, but turning Debug Overlay off again failed: %v", err == nil, ferr))
+			return
+		}
+	}
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	send(map[string]interface{}{"mister": "msx1_overlay", "success": true, "toggled": toggled, "overlay": ov})
 }
