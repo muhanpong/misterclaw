@@ -269,8 +269,9 @@ func toolsList() []ToolDef {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"core":     map[string]interface{}{"type": "string", "description": "Core name. If omitted, uses the currently loaded core."},
-					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
+					"core":           map[string]interface{}{"type": "string", "description": "Core name. If omitted, uses the currently loaded core."},
+					"osd_mask":       map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate). For the MSX1 core most bits are inferred automatically."},
+					"osd_mask_known": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "Optional: which bits of osd_mask you actually know; the others stay inferred. E.g. osd_mask=0, osd_mask_known=32768 asserts only bit 15 (MSX1: no MT32-pi answering)."},
 				},
 			},
 		},
@@ -321,8 +322,9 @@ func toolsList() []ToolDef {
 				"type":     "object",
 				"required": []string{"target"},
 				"properties": map[string]interface{}{
-					"target":   map[string]interface{}{"type": "string", "description": "Menu item name to navigate to (e.g. 'Reset', 'FDD0', 'Aspect ratio')"},
-					"osd_mask": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate)."},
+					"target":         map[string]interface{}{"type": "string", "description": "Menu item name to navigate to (e.g. 'Reset', 'FDD0', 'Aspect ratio')"},
+					"osd_mask":       map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "The core's OSD mask (bit n set = H<n> rows hidden, h<n> rows shown), if known. MiSTer does not publish it; without it, rows that depend on it are reported separately (visible) or navigation that depends on them is refused (navigate). For the MSX1 core most bits are inferred automatically."},
+					"osd_mask_known": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535, "description": "Optional: which bits of osd_mask you actually know; the others stay inferred. E.g. osd_mask=0, osd_mask_known=32768 asserts only bit 15 (MSX1: no MT32-pi answering)."},
 				},
 			},
 		},
@@ -477,6 +479,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		}
 		if m, ok := osdMaskArg(args); ok {
 			req["osd_mask"] = m
+			if k, ok := osdMaskKnownArg(args); ok {
+				req["osd_mask_known"] = k
+			}
 		}
 		return doMisterCommand(req, formatOSDVisible)
 
@@ -521,6 +526,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		}
 		if m, ok := osdMaskArg(args); ok {
 			req["osd_mask"] = m
+			if k, ok := osdMaskKnownArg(args); ok {
+				req["osd_mask_known"] = k
+			}
 		}
 		return doMisterCommand(req, formatOSDNavigate)
 
@@ -540,6 +548,9 @@ func callTool(params json.RawMessage) MCPToolResult {
 		req := map[string]interface{}{"mister": "mount", "target": target, "path": path}
 		if m, ok := osdMaskArg(args); ok {
 			req["osd_mask"] = m
+			if k, ok := osdMaskKnownArg(args); ok {
+				req["osd_mask_known"] = k
+			}
 		}
 		return doMisterCommand(req, formatMount)
 
@@ -568,7 +579,14 @@ func sendMisterCommand(request map[string]interface{}) (map[string]interface{}, 
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	// OSD-driven commands press keys with pauses between them: a mount
+	// walks a file browser, an overlay toggle navigates twice.
+	deadline := 30 * time.Second
+	switch request["mister"] {
+	case "mount", "msx1_overlay":
+		deadline = 90 * time.Second
+	}
+	conn.SetDeadline(time.Now().Add(deadline))
 
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
@@ -937,6 +955,11 @@ func formatOSDVisible(resp map[string]interface{}) MCPToolResult {
 	}
 
 	return textResult(sb.String())
+}
+
+// osdMaskKnownArg reads osd_mask_known like osdMaskArg.
+func osdMaskKnownArg(args map[string]interface{}) (uint32, bool) {
+	return osdMaskArg(map[string]interface{}{"osd_mask": args["osd_mask_known"]})
 }
 
 // osdMaskArg reads the optional osd_mask tool argument (JSON numbers

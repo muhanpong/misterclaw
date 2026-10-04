@@ -13,7 +13,9 @@ func TestTranslateForJIS(t *testing.T) {
 	if got != "^=:" {
 		t.Errorf("got %q", got)
 	}
-	if _, err := TranslateForJIS(`A_B`); err == nil {
-		t.Error("'_' accepted")
+	for _, bad := range []string{"A_B", "2*3", "A(1]", "{}"} {
+		if _, err := TranslateForJIS(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

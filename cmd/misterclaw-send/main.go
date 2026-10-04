@@ -1016,7 +1016,8 @@ func cmdOSDInfo(args []string) error {
 
 func cmdOSDVisible(args []string) error {
 	coreName, args := extractFlag(args, "core", "c")
-	maskStr, _ := extractFlag(args, "mask", "m")
+	maskStr, args := extractFlag(args, "mask", "m")
+	maskKnownStr, _ := extractFlag(args, "mask-known", "")
 
 	req := map[string]interface{}{"mister": "osd_visible"}
 	if coreName != "" {
@@ -1028,6 +1029,13 @@ func cmdOSDVisible(args []string) error {
 			return fmt.Errorf("--mask: %v (decimal or 0x hex, 16 bits)", err)
 		}
 		req["osd_mask"] = m
+	}
+	if maskKnownStr != "" {
+		k, err := strconv.ParseUint(maskKnownStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask-known: %v", err)
+		}
+		req["osd_mask_known"] = k
 	}
 
 	resp, err := sendRequest(req)
@@ -1222,6 +1230,7 @@ func cmdRescan(args []string) error {
 
 func cmdOSDNavigate(args []string) error {
 	maskStr, args := extractFlag(args, "mask", "m")
+	maskKnownStr, args := extractFlag(args, "mask-known", "")
 	target := strings.Join(args, " ")
 	if target == "" {
 		return fmt.Errorf("usage: misterclaw-send osd-navigate [--mask=0xNNNN] <target>\nExample: misterclaw-send osd-navigate Reset")
@@ -1236,6 +1245,13 @@ func cmdOSDNavigate(args []string) error {
 			return fmt.Errorf("--mask: %v (decimal or 0x hex, 16 bits)", err)
 		}
 		req["osd_mask"] = m
+	}
+	if maskKnownStr != "" {
+		k, err := strconv.ParseUint(maskKnownStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask-known: %v", err)
+		}
+		req["osd_mask_known"] = k
 	}
 
 	resp, err := sendRequest(req)
@@ -1628,7 +1644,11 @@ func BuildRequest(cmd string, args []string) (map[string]interface{}, error) {
 
 // cmdMount: misterclaw-send mount [--mask=0xNNNN] <OSD row> <path>
 func cmdMount(args []string) error {
+	if timeoutFlag == 10 { // the default: OSD-driven, needs longer
+		timeoutFlag = 60
+	}
 	maskStr, args := extractFlag(args, "mask", "m")
+	maskKnownStr, args := extractFlag(args, "mask-known", "")
 	if len(args) < 2 {
 		return fmt.Errorf("usage: misterclaw-send mount [--mask=0xNNNN] <OSD row> <path>\nExample: misterclaw-send mount \"Mount Drive A:\" games/MSX1/DSKS/disk2.dsk")
 	}
@@ -1639,6 +1659,13 @@ func cmdMount(args []string) error {
 			return fmt.Errorf("--mask: %v", err)
 		}
 		req["osd_mask"] = m
+	}
+	if maskKnownStr != "" {
+		k, err := strconv.ParseUint(maskKnownStr, 0, 16)
+		if err != nil {
+			return fmt.Errorf("--mask-known: %v", err)
+		}
+		req["osd_mask_known"] = k
 	}
 	resp, err := sendRequest(req)
 	if err != nil {
@@ -1658,6 +1685,9 @@ func cmdMount(args []string) error {
 
 // cmdMSX1Overlay: misterclaw-send msx1-overlay [--toggle]
 func cmdMSX1Overlay(args []string) error {
+	if timeoutFlag == 10 { // the default: OSD-driven, needs longer
+		timeoutFlag = 60
+	}
 	req := map[string]interface{}{"mister": "msx1_overlay"}
 	for _, a := range args {
 		if a == "--toggle" || a == "-t" {
@@ -1683,3 +1713,5 @@ func cmdMSX1Overlay(args []string) error {
 	}
 	return nil
 }
+
+

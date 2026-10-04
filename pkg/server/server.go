@@ -73,6 +73,9 @@ type Request struct {
 	// it.  MiSTer main does not publish it; without it, positions that
 	// depend on conditional rows are refused.
 	OSDMask *uint32 `json:"osd_mask,omitempty"`
+	// With osd_mask: only these bits of osd_mask are asserted; the rest
+	// stays inferred (MSX1) or unknown.  Without it osd_mask is complete.
+	OSDMaskKnown *uint32 `json:"osd_mask_known,omitempty"`
 	// msx1_overlay: turn Debug Overlay on for the reading and off again
 	Toggle bool `json:"toggle,omitempty"`
 
@@ -1231,10 +1234,23 @@ func (s *Server) handleCFGWrite(req Request, send func(interface{})) {
 // caller's osd_mask, else a core-specific inference (MSX1 with a per-build
 // sidecar, so the rules match the build), else nothing.
 func osdMaskFor(req Request, ctx *coreContext) (mister.OSDMask, map[string]interface{}) {
-	if req.OSDMask != nil {
+	if req.OSDMask != nil && req.OSDMaskKnown == nil {
 		m := mister.FullMask(*req.OSDMask)
 		return m, map[string]interface{}{"value": m.Value, "known": m.Known, "source": "request"}
 	}
+	m, info := inferredOSDMask(ctx)
+	if req.OSDMask != nil {
+		k := *req.OSDMaskKnown
+		m.Value = (m.Value &^ k) | (*req.OSDMask & k)
+		m.Known |= k
+		info["value"], info["known"] = m.Value, m.Known
+		info["source"] = fmt.Sprint(info["source"], "+request")
+		info["asserted_bits"] = k
+	}
+	return m, info
+}
+
+func inferredOSDMask(ctx *coreContext) (mister.OSDMask, map[string]interface{}) {
 	if ctx.OSD.CoreName == "MSX1" && ctx.OSDSource == "sidecar" {
 		pack, err := mister.LoadMSX1MachinePack()
 		m, notes := mister.InferMSX1Mask(ctx.CFGData, pack)
