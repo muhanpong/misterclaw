@@ -968,6 +968,25 @@ func FindOptionValue(item *MenuItem, valueName string) int {
 // StripCoreDateSuffix strips date suffixes from core names.
 // "PC88_20250918" -> "PC88", "SNES_20250605" -> "SNES", "Menu" -> "Menu".
 func StripCoreDateSuffix(name string) string {
+	// NAME_YYYYMMDD<letter>[_description], e.g. MSX1_20261004d_opl4regrd
+	for i := 1; i+9 <= len(name); i++ {
+		if name[i] != '_' {
+			continue
+		}
+		j := i + 1
+		for j < len(name) && j < i+9 && name[j] >= '0' && name[j] <= '9' {
+			j++
+		}
+		if j != i+9 || j == len(name) {
+			continue // fewer than 8 digits, or plain NAME_YYYYMMDD (handled below)
+		}
+		if name[j] >= 'a' && name[j] <= 'z' {
+			j++
+		}
+		if j == len(name) || name[j] == '_' {
+			return name[:i]
+		}
+	}
 	if idx := strings.LastIndex(name, "_"); idx > 0 {
 		suffix := name[idx+1:]
 		if len(suffix) == 8 {

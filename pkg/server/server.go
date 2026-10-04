@@ -724,7 +724,7 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 				send(map[string]interface{}{"error": "no core specified and " + err.Error()})
 				return
 			}
-			coreName = mister.StripCoreDateSuffix(status.CoreName)
+			coreName = status.LookupName()
 		}
 
 		db, err := mister.GetConfStrDB()
@@ -784,7 +784,7 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 				send(map[string]interface{}{"error": "no core specified and " + err.Error()})
 				return
 			}
-			coreName = mister.StripCoreDateSuffix(status.CoreName)
+			coreName = status.LookupName()
 		}
 		if err := mister.OSDNavigateTo(coreName, target); err != nil {
 			send(map[string]interface{}{
@@ -909,9 +909,18 @@ func (s *Server) resolveCore(req Request, send func(interface{})) (*coreContext,
 			send(map[string]interface{}{"error": "no core specified and " + err.Error()})
 			return nil, false
 		}
-		coreName = mister.StripCoreDateSuffix(status.CoreName)
-		// CFG name comes from the game (MRA), not the core
-		if status.GamePath != "" {
+		coreName = status.LookupName()
+		// CFG name: what MiSTer main itself uses (/tmp/CORENAME) when known.
+		// Otherwise it comes from the game (MRA), not the core.
+		if status.ConfigName != "" {
+			cfgName = status.ConfigName
+			if strings.HasSuffix(strings.ToLower(status.GamePath), ".mra") {
+				mraPath = status.GamePath
+				if parsed, err := mister.ParseMRA(status.GamePath); err == nil {
+					mra = parsed
+				}
+			}
+		} else if status.GamePath != "" {
 			if strings.HasSuffix(strings.ToLower(status.GamePath), ".mra") {
 				mraPath = status.GamePath
 				if parsed, err := mister.ParseMRA(status.GamePath); err == nil {

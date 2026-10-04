@@ -1,6 +1,9 @@
 package mister
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // Tokens from the MSX1 core's CONF_STR (muhanpong/MSX1_MiSTer) that the parser
 // used to misread.  Each case states what MiSTer main does with the token.
@@ -57,5 +60,54 @@ func TestParseHiddenSeparatorAndLabel(t *testing.T) {
 	}
 	if it := items[3]; it.Type != "separator" || it.Name != "MIDI: built-in" || len(it.HideConditions) != 1 || !it.HideConditions[0].Inverted {
 		t.Errorf("hA-: got %+v", it)
+	}
+}
+
+func TestStripCoreDateSuffix_LetterAndDescription(t *testing.T) {
+	// RBF names like MSX1_20261004d_opl4regrd (date, build letter, short
+	// description) used to keep the whole name, which the fuzzy lookup then
+	// matched to "MSX" or even "C64".
+	tests := []struct{ in, want string }{
+		{"MSX1_20261004d_opl4regrd", "MSX1"},
+		{"MSX1_20260927c_mupack", "MSX1"},
+		{"MSX1_20261004a", "MSX1"},
+		{"PC88_20250918", "PC88"},
+		{"core_v2", "core_v2"},
+		{"Foo_2026100_x", "Foo_2026100_x"},
+	}
+	for _, tt := range tests {
+		if got := StripCoreDateSuffix(tt.in); got != tt.want {
+			t.Errorf("StripCoreDateSuffix(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestRunningCoreNames_FromMiSTerMain(t *testing.T) {
+	// MiSTer main writes the CONF_STR name to /tmp/RBFNAME and the name it
+	// uses for <name>.CFG (the MRA set name on arcade cores) to /tmp/CORENAME.
+	dir := t.TempDir()
+	oldC, oldR := coreNameFilePath, rbfNameFilePath
+	coreNameFilePath, rbfNameFilePath = dir+"/CORENAME", dir+"/RBFNAME"
+	t.Cleanup(func() { coreNameFilePath, rbfNameFilePath = oldC, oldR })
+
+	if c, r := runningNamesFromMain(); c != "" || r != "" {
+		t.Fatalf("missing files: got %q %q, want empty", c, r)
+	}
+	os.WriteFile(coreNameFilePath, []byte("dkong\n"), 0644)
+	os.WriteFile(rbfNameFilePath, []byte("DonkeyKong"), 0644)
+	if c, r := runningNamesFromMain(); c != "dkong" || r != "DonkeyKong" {
+		t.Errorf("got config=%q confstr=%q", c, r)
+	}
+}
+
+func TestCoreStatusNames(t *testing.T) {
+	s := CoreStatus{CoreName: "MSX1_20261004d_opl4regrd", ConfigName: "MSX1", ConfStrName: "MSX1"}
+	if s.LookupName() != "MSX1" || s.CFGName() != "MSX1" {
+		t.Errorf("with main's names: lookup=%q cfg=%q", s.LookupName(), s.CFGName())
+	}
+	// Without /tmp files: fall back to the RBF name with the suffix stripped
+	s = CoreStatus{CoreName: "MSX1_20261004d_opl4regrd"}
+	if s.LookupName() != "MSX1" || s.CFGName() != "MSX1" {
+		t.Errorf("fallback: lookup=%q cfg=%q", s.LookupName(), s.CFGName())
 	}
 }

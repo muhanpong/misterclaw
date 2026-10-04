@@ -17,11 +17,54 @@ func setMisterCmdPath(p string) {
 	cmdPath = p
 }
 
+// Files MiSTer main writes when a core starts (user_io.cpp): RBFNAME holds
+// the first CONF_STR field, CORENAME the name main uses for <name>.CFG --
+// the same field, or the MRA set name on arcade cores.  Vars so tests can
+// redirect them.
+var (
+	coreNameFilePath = "/tmp/CORENAME"
+	rbfNameFilePath  = "/tmp/RBFNAME"
+)
+
 // CoreStatus represents the currently running core.
 type CoreStatus struct {
-	CoreName string `json:"core_name"` // e.g. "DonkeyKong_20240526"
+	CoreName string `json:"core_name"` // RBF file name, e.g. "DonkeyKong_20240526"
 	CorePath string `json:"core_path"` // e.g. "/media/fat/_Arcade/cores/DonkeyKong_20240526.rbf"
 	GamePath string `json:"game_path"` // e.g. "/media/fat/_Arcade/Donkey Kong (US, Set 1).mra"
+	// From MiSTer main; empty when the files are missing.
+	ConfStrName string `json:"conf_str_name,omitempty"` // first CONF_STR field (/tmp/RBFNAME)
+	ConfigName  string `json:"config_name,omitempty"`   // <name>.CFG that main loads (/tmp/CORENAME)
+}
+
+// runningNamesFromMain returns (CORENAME, RBFNAME), "" for a missing file.
+func runningNamesFromMain() (configName, confStrName string) {
+	read := func(p string) string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(b))
+	}
+	return read(coreNameFilePath), read(rbfNameFilePath)
+}
+
+// LookupName is the name to look the core up by in the CONF_STR database:
+// what MiSTer main read from the core itself, else the RBF file name with
+// its date suffix removed.
+func (s *CoreStatus) LookupName() string {
+	if s.ConfStrName != "" {
+		return s.ConfStrName
+	}
+	return StripCoreDateSuffix(s.CoreName)
+}
+
+// CFGName is the base name of the .CFG file MiSTer main uses for this core
+// (user_io_create_config_name), else the stripped RBF file name.
+func (s *CoreStatus) CFGName() string {
+	if s.ConfigName != "" {
+		return s.ConfigName
+	}
+	return StripCoreDateSuffix(s.CoreName)
 }
 
 // GetRunningCore reads /proc to find what core MiSTer is currently running.
@@ -66,6 +109,7 @@ func GetRunningCore() (*CoreStatus, error) {
 				status.GamePath = arg
 			}
 		}
+		status.ConfigName, status.ConfStrName = runningNamesFromMain()
 		return status, nil
 	}
 
