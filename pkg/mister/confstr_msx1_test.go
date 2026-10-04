@@ -132,9 +132,15 @@ func msx1NavOSD() *CoreOSD {
 func u32(v uint32) *uint32 { return &v }
 
 func TestOSDPosition_UnknownMaskRefusesDependentRows(t *testing.T) {
-	_, err := FindOSDItemPositionMask(msx1NavOSD(), "Pause on OSD", nil)
-	if err == nil || !strings.Contains(err.Error(), "osd_mask") {
-		t.Fatalf("want refusal asking for osd_mask, got %v", err)
+	// Conditional rows both above and below: neither direction is certain.
+	osd := &CoreOSD{CoreName: "X", ConfStrRaw: "X;;H1O1,Above,a,b;O2,Target,a,b;H2O3,Below,a,b"}
+	_, err := FindOSDItemPositionMask(osd, "Target", nil)
+	if err == nil || !strings.Contains(err.Error(), "osd_mask") || !strings.Contains(err.Error(), "H2O3") {
+		t.Fatalf("want refusal naming the rows and asking for osd_mask, got %v", err)
+	}
+	// Only rows above uncertain: bottom-up works.
+	if loc, err := FindOSDItemPositionMask(msx1NavOSD(), "Pause on OSD", nil); err != nil || !loc.UseBottomNav {
+		t.Errorf("Pause on OSD: %+v %v; want bottom-up", loc, err)
 	}
 	if _, err := FindOSDItemPositionMask(msx1NavOSD(), "SLOT A", nil); err == nil {
 		t.Error("ambiguous SLOT A accepted without a mask")
@@ -180,5 +186,19 @@ func TestOSDPosition_SubPageNeedsOnlyRowsOnItsPath(t *testing.T) {
 		if err != nil || loc.Position != pos {
 			t.Errorf("Scale mask %#x: %+v %v, want %d", mask, loc, err, pos)
 		}
+	}
+}
+
+func TestOSDPosition_TopLevelFallsBackToBottomUp(t *testing.T) {
+	// Rows above Reset depend on the mask, rows below it do not: count up
+	// from the bottom (the OSD wraps from the top row to Exit).
+	loc, err := FindOSDItemPositionMask(msx1NavOSD(), "Reset", nil)
+	if err != nil || loc.OnSubPage || !loc.UseBottomNav || loc.BottomOffset != 1 {
+		t.Fatalf("Reset without mask: %+v %v; want bottom-up, 1 row below", loc, err)
+	}
+	// Known mask: plain top-down count.
+	loc, err = FindOSDItemPositionMask(msx1NavOSD(), "Reset", u32(0))
+	if err != nil || loc.UseBottomNav || loc.Position != 5 {
+		t.Errorf("Reset with mask 0: %+v %v; want top-down 5", loc, err)
 	}
 }

@@ -1167,7 +1167,7 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 	// Top level, counted from the top.
 	var unknown []string
 	pos := 0
-	for _, it := range top {
+	for ti, it := range top {
 		st := rowState(it, mask)
 		if it.Type != "sub_page" && matches(it) {
 			if st == 0 {
@@ -1176,10 +1176,24 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 			if st < 0 {
 				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, it.Raw))
 			}
-			if len(unknown) > 0 {
-				return OSDItemLocation{}, errMaskUnknown(target, unknown)
+			if len(unknown) == 0 {
+				return OSDItemLocation{Position: pos, Item: it}, nil
 			}
-			return OSDItemLocation{Position: pos, Item: it}, nil
+			// Rows above are uncertain: try counting up from the bottom.
+			below := 0
+			var unkBelow []string
+			for _, r := range top[ti+1:] {
+				switch rowState(r, mask) {
+				case 1:
+					below++
+				case -1:
+					unkBelow = append(unkBelow, r.Raw)
+				}
+			}
+			if len(unkBelow) > 0 {
+				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, unkBelow...))
+			}
+			return OSDItemLocation{Position: -1, UseBottomNav: true, BottomOffset: below, Item: it}, nil
 		}
 		switch st {
 		case 1:
