@@ -765,14 +765,14 @@ func OSDNavigateTo(coreName, target string) error {
 	if err != nil {
 		return err
 	}
-	return OSDNavigateToOSD(r.OSD, nil, target)
+	return OSDNavigateToOSD(r.OSD, OSDMask{}, target)
 }
 
 // OSDNavigateToOSD is OSDNavigateTo for an already resolved OSD description
-// (see ResolveRunningOSD).  mask is the core's OSD mask if known (nil:
-// refuse positions that depend on mask-conditional rows).
-func OSDNavigateToOSD(osd *CoreOSD, mask *uint32, target string) error {
-	loc, err := FindOSDItemPositionMask(osd, target, mask)
+// (see ResolveRunningOSD).  mask holds what is known of the core's OSD
+// mask; positions that depend on unknown bits are refused.
+func OSDNavigateToOSD(osd *CoreOSD, mask OSDMask, target string) error {
+	loc, err := FindOSDItemPositionKnown(osd, target, mask)
 	if err != nil {
 		return err
 	}

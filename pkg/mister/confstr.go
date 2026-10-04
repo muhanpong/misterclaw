@@ -1128,23 +1128,56 @@ func (m *MenuItem) MaskDependent() bool {
 	return false
 }
 
-// rowState: 1 shown, 0 hidden, -1 unknown (depends on an unknown mask).
-func rowState(it MenuItem, mask *uint32) int {
-	if !it.MaskDependent() {
-		return 1
+// rowState: 1 shown, 0 hidden, -1 unknown.  A row is hidden as soon as
+// one known bit hides it; otherwise any unknown bit leaves it unknown.
+func rowState(it MenuItem, m OSDMask) int {
+	unknown := false
+	for _, c := range it.HideConditions {
+		if c.Type != "hide" || c.Bit < 0 || c.Bit > 31 {
+			continue
+		}
+		bit := uint32(1) << uint(c.Bit)
+		if m.Known&bit == 0 {
+			unknown = true
+			continue
+		}
+		if (m.Value&bit != 0) != c.Inverted {
+			return 0
+		}
 	}
-	if mask == nil {
+	if unknown {
 		return -1
 	}
-	if it.VisibleWithMask(*mask) {
-		return 1
-	}
-	return 0
+	return 1
 }
 
-func errMaskUnknown(target string, rows []string) error {
-	return fmt.Errorf("the OSD position of %q depends on rows the core shows or hides through its OSD mask (%s); "+
-		"MiSTer main reads that mask from the core and does not publish it -- pass osd_mask", target, strings.Join(rows, "; "))
+// unknownBits lists the mask bits the rows depend on that m does not know.
+func unknownBits(rows []MenuItem, m OSDMask) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, it := range rows {
+		for _, c := range it.HideConditions {
+			if c.Type == "hide" && c.Bit >= 0 && c.Bit < 32 && m.Known&(1<<uint(c.Bit)) == 0 && !seen[c.Bit] {
+				seen[c.Bit] = true
+				out = append(out, c.Bit)
+			}
+		}
+	}
+	return out
+}
+
+func errMaskUnknown(target string, rows []MenuItem, m OSDMask) error {
+	raws := make([]string, len(rows))
+	for i, r := range rows {
+		raws[i] = r.Raw
+	}
+	bits := unknownBits(rows, m)
+	bs := make([]string, len(bits))
+	for i, b := range bits {
+		bs[i] = fmt.Sprintf("bit %d", b)
+	}
+	return fmt.Errorf("the OSD position of %q depends on rows the core shows or hides through OSD mask %s, which is not known (rows: %s); "+
+		"MiSTer main reads that mask from the core and does not publish it -- pass osd_mask", target, strings.Join(bs, ", "), strings.Join(raws, "; "))
 }
 
 // FindOSDItemPositionMask locates target in the OSD the way MiSTer main
@@ -1154,6 +1187,15 @@ func errMaskUnknown(target string, rows []string) error {
 // sub-pages are entered by counting up from the bottom of the top level,
 // so only rows on that path matter.
 func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItemLocation, error) {
+	var m OSDMask
+	if mask != nil {
+		m = FullMask(*mask)
+	}
+	return FindOSDItemPositionKnown(osd, target, m)
+}
+
+// FindOSDItemPositionKnown is FindOSDItemPositionMask for a partly known mask.
+func FindOSDItemPositionKnown(osd *CoreOSD, target string, mask OSDMask) (OSDItemLocation, error) {
 	items := ParseConfStr(osd.ConfStrRaw)
 	want := strings.ToLower(target)
 	matches := func(it MenuItem) bool {
@@ -1168,7 +1210,7 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 	}
 
 	// Top level, counted from the top.
-	var unknown []string
+	var unknown []MenuItem
 	pos := 0
 	for ti, it := range top {
 		st := rowState(it, mask)
@@ -1177,24 +1219,24 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 				continue // a hidden twin; another row may carry the name
 			}
 			if st < 0 {
-				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, it.Raw))
+				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, it), mask)
 			}
 			if len(unknown) == 0 {
 				return OSDItemLocation{Position: pos, Item: it}, nil
 			}
 			// Rows above are uncertain: try counting up from the bottom.
 			below := 0
-			var unkBelow []string
+			var unkBelow []MenuItem
 			for _, r := range top[ti+1:] {
 				switch rowState(r, mask) {
 				case 1:
 					below++
 				case -1:
-					unkBelow = append(unkBelow, r.Raw)
+					unkBelow = append(unkBelow, r)
 				}
 			}
 			if len(unkBelow) > 0 {
-				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, unkBelow...))
+				return OSDItemLocation{}, errMaskUnknown(target, append(unknown, unkBelow...), mask)
 			}
 			return OSDItemLocation{Position: -1, UseBottomNav: true, BottomOffset: below, Item: it}, nil
 		}
@@ -1202,7 +1244,7 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 		case 1:
 			pos++
 		case -1:
-			unknown = append(unknown, it.Raw)
+			unknown = append(unknown, it)
 		}
 	}
 
@@ -1221,7 +1263,7 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 				inPage = append(inPage, it)
 			}
 		}
-		var unk []string
+		var unk []MenuItem
 		sub := 0
 		for _, it := range inPage {
 			st := rowState(it, mask)
@@ -1231,9 +1273,9 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 				}
 				// Path: the page entry, every top-level row below it, the
 				// rows above the target inside the page.
-				var path []string
+				var path []MenuItem
 				if pst < 0 {
-					path = append(path, page.Raw)
+					path = append(path, page)
 				}
 				below := 0
 				for _, r := range top[pi+1:] {
@@ -1241,15 +1283,15 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 					case 1:
 						below++
 					case -1:
-						path = append(path, r.Raw)
+						path = append(path, r)
 					}
 				}
 				path = append(path, unk...)
 				if st < 0 {
-					path = append(path, it.Raw)
+					path = append(path, it)
 				}
 				if len(path) > 0 {
-					return OSDItemLocation{}, errMaskUnknown(target, path)
+					return OSDItemLocation{}, errMaskUnknown(target, path, mask)
 				}
 				// Top-level position of the page entry: informational only
 				// (navigation counts up from the bottom); -1 when rows
@@ -1269,7 +1311,7 @@ func FindOSDItemPositionMask(osd *CoreOSD, target string, mask *uint32) (OSDItem
 			case 1:
 				sub++
 			case -1:
-				unk = append(unk, it.Raw)
+				unk = append(unk, it)
 			}
 		}
 	}
@@ -1285,3 +1327,7 @@ func IsListedMenuItem(it MenuItem) bool {
 	}
 	return true
 }
+
+// RowState reports how MiSTer main treats a row under mask m:
+// 1 drawn, 0 hidden, -1 unknown (depends on bits m does not know).
+func RowState(it MenuItem, m OSDMask) int { return rowState(it, m) }

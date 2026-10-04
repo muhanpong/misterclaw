@@ -796,19 +796,22 @@ func (s *Server) handleMiSTer(req Request, send func(interface{})) {
 			return
 		}
 		coreName := ctx.OSD.CoreName
-		if err := mister.OSDNavigateToOSD(ctx.OSD, req.OSDMask, target); err != nil {
+		mask, maskInfo := osdMaskFor(req, ctx)
+		if err := mister.OSDNavigateToOSD(ctx.OSD, mask, target); err != nil {
 			send(map[string]interface{}{
-				"mister":  "osd_navigate",
-				"success": false,
-				"error":   err.Error(),
+				"mister":   "osd_navigate",
+				"success":  false,
+				"error":    err.Error(),
+				"osd_mask": maskInfo,
 			})
 			return
 		}
 		send(map[string]interface{}{
-			"mister":  "osd_navigate",
-			"success": true,
-			"target":  target,
-			"core":    coreName,
+			"mister":   "osd_navigate",
+			"success":  true,
+			"target":   target,
+			"core":     coreName,
+			"osd_mask": maskInfo,
 		})
 
 	case "system_info":
@@ -1008,21 +1011,18 @@ func (s *Server) handleOSDVisible(req Request, send func(interface{})) {
 	}
 
 	// Row visibility (H/h) follows the core's OSD mask, not .CFG bits.
-	// Without the mask, list the conditional rows separately.
+	// Rows that depend on bits nobody knows are listed separately.
+	mask, maskInfo := osdMaskFor(req, ctx)
 	var visible, dependent []mister.MenuItem
 	for _, it := range ctx.OSD.Menu {
 		if !mister.IsListedMenuItem(it) {
 			continue
 		}
-		switch {
-		case req.OSDMask != nil:
-			if it.VisibleWithMask(*req.OSDMask) {
-				visible = append(visible, it)
-			}
-		case it.MaskDependent():
-			dependent = append(dependent, it)
-		default:
+		switch mister.RowState(it, mask) {
+		case 1:
 			visible = append(visible, it)
+		case -1:
+			dependent = append(dependent, it)
 		}
 	}
 	resp := map[string]interface{}{
@@ -1031,8 +1031,9 @@ func (s *Server) handleOSDVisible(req Request, send func(interface{})) {
 		"core_name":  ctx.OSD.CoreName,
 		"osd_source": ctx.OSDSource,
 		"menu":       visible,
+		"osd_mask":   maskInfo,
 	}
-	if req.OSDMask == nil && len(dependent) > 0 {
+	if len(dependent) > 0 {
 		resp["mask_dependent"] = dependent
 		resp["note"] = "rows in mask_dependent are shown or hidden by the core's OSD mask; pass osd_mask to resolve them"
 	}
@@ -1204,4 +1205,26 @@ func (s *Server) handleCFGWrite(req Request, send func(interface{})) {
 		"success": false,
 		"error":   fmt.Sprintf("option not found: %s (checked CONF_STR options and DIP switches)", req.Option),
 	})
+}
+
+// osdMaskFor decides what is known of the running core's OSD mask: the
+// caller's osd_mask, else a core-specific inference (MSX1 with a per-build
+// sidecar, so the rules match the build), else nothing.
+func osdMaskFor(req Request, ctx *coreContext) (mister.OSDMask, map[string]interface{}) {
+	if req.OSDMask != nil {
+		m := mister.FullMask(*req.OSDMask)
+		return m, map[string]interface{}{"value": m.Value, "known": m.Known, "source": "request"}
+	}
+	if ctx.OSD.CoreName == "MSX1" && ctx.OSDSource == "sidecar" {
+		pack, err := mister.LoadMSX1MachinePack()
+		m, notes := mister.InferMSX1Mask(ctx.CFGData, pack)
+		info := map[string]interface{}{"value": m.Value, "known": m.Known, "source": "inferred-msx1", "notes": notes}
+		if err != nil {
+			info["pack_error"] = err.Error()
+		} else {
+			info["pack"] = pack
+		}
+		return m, info
+	}
+	return mister.OSDMask{}, map[string]interface{}{"source": "none"}
 }
