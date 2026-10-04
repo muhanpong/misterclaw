@@ -777,19 +777,9 @@ func OSDNavigateToOSD(osd *CoreOSD, mask OSDMask, target string) error {
 		return err
 	}
 
-	// Ensure OSD is closed first, then open it.
-	// If OSD was already open (e.g. from a previous navigate), F12 would close it.
-	// Escape closes the OSD if open, does nothing if closed.
-	// (Was PressKey("Escape") — that name is not in KeyNames, so the
-	// close-first step silently never happened.)
-	PressKey("esc")
-	time.Sleep(200 * time.Millisecond)
-
-	// Open OSD
-	if err := PressKey("F12"); err != nil {
-		return fmt.Errorf("OSD open: %w", err)
+	if err := openOSDAtTop(); err != nil {
+		return err
 	}
-	time.Sleep(500 * time.Millisecond)
 
 	if loc.OnSubPage {
 		// Navigate to the sub-page entry from the bottom (more reliable
@@ -846,6 +836,37 @@ func OSDNavigateToOSD(osd *CoreOSD, mask OSDMask, target string) error {
 		}
 	}
 
+	return nil
+}
+
+// openOSDAtTop leaves the OSD open on the top-level page with the cursor
+// on its first row, whatever state it was in.  MiSTer main (menu.cpp)
+// resets the cursor when the OSD opens but keeps the sub-page it was
+// closed on, so "close, then F12" reopens inside that page and every count
+// that follows is off (seen on hardware: a second navigation to an Audio
+// page row landed on another row of that page).  Keys, on MiSTer main:
+// Esc closes an open OSD (and reaches the core when the OSD is closed);
+// Backspace inside a sub-page goes up to the top level, on the top level
+// it closes the OSD.  So:
+//
+//	esc, F12        -> open, on the top level or in the last sub-page
+//	backspace       -> sub-page: top level, open | top level: closed
+//	esc             -> open: closed            | closed: to the core
+//	F12             -> open on the top level, cursor on the first row
+//
+// Cost: when the OSD was not left in a sub-page, the core sees one extra
+// Esc (it already saw one from the first step).
+func openOSDAtTop() error {
+	for _, k := range []string{"esc", "F12", "backspace", "esc"} {
+		if err := PressKey(k); err != nil {
+			return fmt.Errorf("OSD reset key %s: %w", k, err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err := PressKey("F12"); err != nil {
+		return fmt.Errorf("OSD open: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
 	return nil
 }
 

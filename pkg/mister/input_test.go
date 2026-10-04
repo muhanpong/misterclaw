@@ -921,7 +921,7 @@ func TestOSDNavigateTo(t *testing.T) {
 	events := mock.getEvents()
 	// Esc close-first (2) + F12 (2) + 2x Down (2*2) = 8 events; navigation
 	// only — the trailing Enter is the caller's job (OSDResetByCore).
-	expectedCount := 2 + 2 + 2*2
+	expectedCount := osdOpenEvents + 2*2
 	if len(events) != expectedCount {
 		t.Fatalf("expected %d events, got %d: %v", expectedCount, len(events), events)
 	}
@@ -929,8 +929,9 @@ func TestOSDNavigateTo(t *testing.T) {
 	if events[0].code != KeyNames["esc"] {
 		t.Errorf("first event should be Esc, got code %d", events[0].code)
 	}
-	if events[2].code != KeyNames["f12"] {
-		t.Errorf("third event should be F12, got code %d", events[2].code)
+	checkOSDOpenSequence(t, events)
+	if events[osdOpenEvents-2].code != KeyNames["f12"] {
+		t.Errorf("OSD open should end with F12, got code %d", events[osdOpenEvents-2].code)
 	}
 	// Last two events: Down down/up
 	if events[len(events)-2].code != KeyNames["down"] {
@@ -954,11 +955,12 @@ func TestOSDResetByCore(t *testing.T) {
 	}
 
 	events := mock.getEvents()
-	// Esc (2) + F12 (2) + 0x Down (Reset is the first selectable item —
-	// the separator is skipped) + Enter (2) = 6 events
-	if len(events) != 6 {
-		t.Fatalf("expected 6 events, got %d: %v", len(events), events)
+	// OSD open sequence + 0x Down (Reset is the first selectable item —
+	// the separator is skipped) + Enter (2)
+	if len(events) != osdOpenEvents+2 {
+		t.Fatalf("expected %d events, got %d: %v", osdOpenEvents+2, len(events), events)
 	}
+	checkOSDOpenSequence(t, events)
 	_ = mock
 }
 
@@ -1007,7 +1009,7 @@ func TestOSDNavigateTo_SubPage(t *testing.T) {
 	// top-down counting unreliable): Esc (2) + F12 (2) + 2x Up past the
 	// implicit Exit entry + BottomOffset=1 Up (3*2=6) + Enter into the
 	// sub-page (2) + 0x Down (Widescreen is item 0) = 12 events.
-	expectedCount := 2 + 2 + 3*2 + 2
+	expectedCount := osdOpenEvents + 3*2 + 2
 	if len(events) != expectedCount {
 		t.Fatalf("expected %d events, got %d: %v", expectedCount, len(events), events)
 	}
@@ -1015,8 +1017,8 @@ func TestOSDNavigateTo_SubPage(t *testing.T) {
 		t.Errorf("first event should be Esc, got code %d", events[0].code)
 	}
 	// After Esc + F12, three Ups walk to the page entry from the bottom
-	if events[4].code != KeyNames["up"] {
-		t.Errorf("expected Up arrow at index 4, got code %d", events[4].code)
+	if events[osdOpenEvents].code != KeyNames["up"] {
+		t.Errorf("expected Up arrow right after the OSD open sequence, got code %d", events[osdOpenEvents].code)
 	}
 	// Last two events: Enter (entering the sub-page)
 	if events[len(events)-2].code != KeyNames["enter"] {
@@ -1043,8 +1045,22 @@ func TestOSDNavigateTo_SubPageDeepItem(t *testing.T) {
 	// Esc(2) + F12(2) + 3x Up to the page entry from the bottom (2 fixed
 	// past Exit + BottomOffset=1, 3*2=6) + Enter into sub-page(2)
 	// + 2x Down to Opt3(4) = 16
-	expectedCount := 2 + 2 + 3*2 + 2 + 2*2
+	expectedCount := osdOpenEvents + 3*2 + 2 + 2*2
 	if len(events) != expectedCount {
 		t.Fatalf("expected %d events, got %d: %v", expectedCount, len(events), events)
+	}
+}
+
+// osdOpenEvents is the key events openOSDAtTop sends: esc, F12, backspace,
+// esc, F12, each a down and an up.
+const osdOpenEvents = 10
+
+func checkOSDOpenSequence(t *testing.T, events []keyEvent) {
+	t.Helper()
+	want := []string{"esc", "f12", "backspace", "esc", "f12"}
+	for i, k := range want {
+		if events[2*i].code != KeyNames[k] {
+			t.Errorf("OSD open key %d: got code %d, want %s", i, events[2*i].code, k)
+		}
 	}
 }
