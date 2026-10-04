@@ -1130,17 +1130,24 @@ func cmdCFGRead(args []string) error {
 
 func cmdCFGWrite(args []string) error {
 	optionName, rest := extractFlag(args, "option", "o")
-	valueName, _ := extractFlag(rest, "value", "v")
+	valueName, rest := extractFlag(rest, "value", "v")
+	coreName, _ := extractFlag(rest, "core", "c")
 
 	if optionName == "" || valueName == "" {
-		return fmt.Errorf("usage: misterclaw-send cfg-write --option <name> --value <value>")
+		return fmt.Errorf("usage: misterclaw-send cfg-write [--core <name>] --option <name> --value <value>")
 	}
 
-	resp, err := sendRequest(map[string]interface{}{
+	req := map[string]interface{}{
 		"mister": "cfg_write",
 		"option": optionName,
 		"value":  valueName,
-	})
+	}
+	// --core used to be dropped silently, so the write went to the running
+	// core instead of the one named.
+	if coreName != "" {
+		req["core"] = coreName
+	}
+	resp, err := sendRequest(req)
 	if err != nil {
 		return err
 	}

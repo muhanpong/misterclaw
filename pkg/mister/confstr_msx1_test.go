@@ -202,3 +202,14 @@ func TestOSDPosition_TopLevelFallsBackToBottomUp(t *testing.T) {
 		t.Errorf("Reset with mask 0: %+v %v; want top-down 5", loc, err)
 	}
 }
+
+func TestParseBitRange_BracketHighFirst(t *testing.T) {
+	// O[19:17] is written high:low; report it as low..high like the
+	// legacy forms so "bit" in cfg_read is the field's first bit.
+	if lo, hi := parseBitRange("[19:17]"); lo != 17 || hi != 19 {
+		t.Errorf("[19:17] -> %d,%d, want 17,19", lo, hi)
+	}
+	if lo, hi := parseBitRange("[17:19]"); lo != 17 || hi != 19 {
+		t.Errorf("[17:19] -> %d,%d, want 17,19", lo, hi)
+	}
+}

@@ -266,6 +266,9 @@ func parseBitRange(s string) (int, int) {
 		if idx := strings.Index(inner, ":"); idx >= 0 {
 			lo, _ := strconv.Atoi(inner[:idx])
 			hi, _ := strconv.Atoi(inner[idx+1:])
+			if lo > hi { // CONF_STR writes O[high:low]
+				lo, hi = hi, lo
+			}
 			return lo, hi
 		}
 		n, _ := strconv.Atoi(inner)
