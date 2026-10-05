@@ -19,6 +19,8 @@ type fakeBrowser struct {
 	cur    int
 	sel    string
 	keys   []string
+	recent bool   // typed within MiSTer's 2 s filter window
+	acc    string // MiSTer's filter text: survives entering a directory
 }
 
 func (b *fakeBrowser) entries() []string {
@@ -30,7 +32,7 @@ func (b *fakeBrowser) entries() []string {
 	sort.Strings(es)
 	for _, e := range es {
 		n := strings.TrimSuffix(e, "/")
-		if b.filter == "" || strings.HasPrefix(strings.ToLower(n), b.filter) {
+		if b.filter == "" || strings.Contains(strings.ToLower(n), b.filter) {
 			out = append(out, n)
 		}
 	}
@@ -80,9 +82,16 @@ func (b *fakeBrowser) io() browserIO {
 		},
 		typ: func(t string) error {
 			b.keys = append(b.keys, "type:"+t)
-			b.filter, b.cur = t, 0
+			if b.recent {
+				b.acc += t // within 2 s: appended, as MiSTer does
+			} else {
+				b.acc = t
+			}
+			b.filter = b.acc
+			b.recent, b.cur = true, 0
 			return nil
 		},
+		filterGap: func() { b.recent = false },
 		state: func() BrowserState {
 			es := b.entries()
 			item := ""
@@ -98,6 +107,17 @@ func (b *fakeBrowser) io() browserIO {
 			return BrowserState{Select: sel, Dir: b.dir, Item: item}
 		},
 		wait: func() {},
+	}
+}
+
+func TestBrowse_FilterWindowNotExtended(t *testing.T) {
+	// Without waiting out the 2 s window, "dsks" + "msxtools" became one
+	// filter on the board; the walk must start each name afresh.
+	b := newFakeBrowser("/media/fat/games/MSX1")
+	b.tree["/media/fat/games/MSX1/DSKS"] = append(b.tree["/media/fat/games/MSX1/DSKS"], "MSXTOOLS.DSK")
+	b.tree["/media/fat/games/MSX1"] = append(b.tree["/media/fat/games/MSX1"], "GoodMSX1/")
+	if _, err := b.io().browseAndSelect("/media/fat/games/MSX1/DSKS/MSXTOOLS.DSK"); err != nil {
+		t.Fatalf("%v keys=%v", err, b.keys)
 	}
 }
 

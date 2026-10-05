@@ -49,13 +49,17 @@ type browserIO struct {
 	typ   func(text string) error
 	state func() BrowserState
 	wait  func()
+	// filterGap waits out MiSTer's 2 s type-to-filter window, so the next
+	// letters start a new filter instead of extending the last one.
+	filterGap func()
 }
 
 var liveBrowserIO = browserIO{
-	press: PressKey,
-	typ:   TypeText,
-	state: readBrowserState,
-	wait:  func() { time.Sleep(350 * time.Millisecond) },
+	press:     PressKey,
+	typ:       TypeText,
+	state:     readBrowserState,
+	wait:      func() { time.Sleep(350 * time.Millisecond) },
+	filterGap: func() { time.Sleep(2200 * time.Millisecond) },
 }
 
 // ClearBrowserState removes stale browser files so that an "active" read
@@ -86,7 +90,14 @@ func filterPrefix(name string) string {
 // highlight puts the browser cursor on the entry called name in the
 // current directory, verifying through CURRENTPATH.
 func (io browserIO) highlight(name string) error {
+	// The filter keeps only names that contain the typed text anywhere
+	// (file_io.cpp ScanDirectory: strncasecmp at every position), sorted;
+	// letters typed within 2 s of the last ones are appended to it
+	// (menu.cpp filter_typing_timer).  Seen on hardware: "dsks" to enter a
+	// directory followed at once by the file's letters made one filter
+	// that matched nothing.
 	if p := filterPrefix(name); p != "" {
+		io.filterGap()
 		if err := io.typ(p); err != nil {
 			return err
 		}
