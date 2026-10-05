@@ -213,3 +213,33 @@ func TestParseBitRange_BracketHighFirst(t *testing.T) {
 		t.Errorf("[17:19] -> %d,%d, want 17,19", lo, hi)
 	}
 }
+
+// MSX1 core 45b1f1f (core_builder, 2026-10-05): the rows tied to mask bits 5
+// and 6 became D (disabled) instead of H (hidden).  MiSTer main keeps a D
+// row on the cursor path and ignores Enter on it, so their positions no
+// longer depend on those bits.
+const msx1D56Snippet = "MSX1;;" +
+	"H7H2O[19:17],SLOT A,ROM,SCC;" +
+	"H7H3FS3,ROM,Load,30C00000;" +
+	"H7D5O[28:26],SRAM size,auto,1kB;" +
+	"-;" +
+	"D6R[11],SRAM Save;D6R[39],SRAM Load;D6O[52],SRAM Autosave,Off,On;" +
+	"-;C,Cheats;" +
+	"hFP5,MT32-pi;hFP5O[25],Use MT32-pi,Yes,No;" +
+	"-;T[0],Reset"
+
+func TestOSDPosition_DisabledRowsKeepTheirPlace(t *testing.T) {
+	osd := &CoreOSD{CoreName: "MSX1", ConfStrRaw: msx1D56Snippet}
+	// Only bits 2, 3, 7 known (all clear); 5, 6 and 15 unknown.
+	m := OSDMask{Value: 0, Known: 1<<2 | 1<<3 | 1<<7}
+	cases := map[string]int{"SRAM size": 2, "SRAM Save": 3, "SRAM Load": 4, "SRAM Autosave": 5, "Cheats": 6}
+	for target, pos := range cases {
+		loc, err := FindOSDItemPositionKnown(osd, target, m)
+		if err != nil || loc.UseBottomNav || loc.Position != pos {
+			t.Errorf("%s: %+v %v, want top-down %d", target, loc, err, pos)
+		}
+	}
+	if _, err := FindOSDItemPositionKnown(osd, "Reset", m); err != nil {
+		t.Errorf("Reset (bottom-up past the MT32-pi page needs bit 15; top-down should work): %v", err)
+	}
+}

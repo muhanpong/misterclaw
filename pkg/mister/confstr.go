@@ -491,10 +491,12 @@ func parseReset(raw, rest string) *MenuItem {
 
 // parseCheat parses C entries.
 func parseCheat(raw, rest string) *MenuItem {
+	// "C,Cheats": the row text follows the comma (it used to keep the
+	// comma, so a navigation to "Cheats" found nothing)
 	return &MenuItem{
 		Type: "cheat",
 		Raw:  raw,
-		Name: rest,
+		Name: strings.TrimPrefix(rest, ","),
 	}
 }
 
