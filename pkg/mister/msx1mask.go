@@ -158,7 +158,7 @@ func InferMSX1Mask(cfg []byte, pack *MSX1PackInfo) (OSDMask, []string) {
 
 	// Sub-slot walk (msx_config.sv): first ROM/SCC takes the file, ROM sets
 	// rom*_used; later ROM/SCC entries become None.
-	walk := func(base int, maxDev int, exp bool) (fileUsed, romUsed bool) {
+	walk := func(base int, maxDev int, exp bool) (fileUsed, romUsed, sramDev bool) {
 		if !exp {
 			return
 		}
@@ -166,6 +166,9 @@ func InferMSX1Mask(cfg []byte, pack *MSX1PackInfo) (OSDMask, []string) {
 			d := st(base+3*i, base+3*i+2)
 			if d > maxDev {
 				d = 0
+			}
+			if d == 4 || d == 5 { // FM-PAC, GameMaster2: the first one is kept
+				sramDev = true
 			}
 			if d == 1 || d == 2 { // ROM, SCC
 				if fileUsed {
@@ -179,8 +182,18 @@ func InferMSX1Mask(cfg []byte, pack *MSX1PackInfo) (OSDMask, []string) {
 		}
 		return
 	}
-	fileAUsed, romAUsed := walk(73, 5, expA)
-	fileBUsed, romBUsed := walk(85, 4, expB)
+	fileAUsed, romAUsed, sramA := walk(73, 5, expA)
+	fileBUsed, romBUsed, sramB := walk(85, 4, expB)
+	// FM-PAC and GameMaster2 always get 8 KB of SRAM (memory_upload.sv
+	// cart_confDecoder: SUB_FMPAC/SUB_GM2 and CART_TYP_FM_PAC/GM2 rows), so
+	// with one present the SRAM sum is not 0 and bit 6 is clear.
+	const typFMPAC, typGM2 = 3, 5
+	if !expA && typAKnown && (typA == typFMPAC || typA == typGM2) {
+		sramA = true
+	}
+	if !expB && typB == typFMPAC {
+		sramB = true
+	}
 
 	m.set(0, st(8, 8) == 1)
 	m.set(7, expA)
@@ -224,7 +237,12 @@ func InferMSX1Mask(cfg []byte, pack *MSX1PackInfo) (OSDMask, []string) {
 			m.set(9, true)
 		}
 	}
-	notes = append(notes, "bit 6 (SRAM sizes) and bit 15 (MT32-pi answering) are not inferred")
+	if sramA || sramB {
+		m.set(6, false)
+		notes = append(notes, "bit 15 (MT32-pi answering) is not inferred")
+	} else {
+		notes = append(notes, "bit 6 (SRAM sizes, no FM-PAC/GameMaster2 in a slot) and bit 15 (MT32-pi answering) are not inferred")
+	}
 	return m, notes
 }
 

@@ -87,10 +87,20 @@ func TestInferMSX1Mask_CFGBits(t *testing.T) {
 			t.Errorf("bit %d: got %v known=%v, want %v", b, got, known, v)
 		}
 	}
-	for _, b := range []int{1, 2, 6, 9, 10, 13, 15} {
+	for _, b := range []int{1, 2, 9, 10, 13, 15} {
 		if _, known := bitOf(m, b); known && b != 9 {
 			t.Errorf("bit %d should be unknown without the pack", b)
 		}
+	}
+	// Slot B sub-slot 0 = FM-PAC: 8 KB SRAM, so bit 6 is known clear
+	// (checked on hardware 2026-10-05: the SRAM rows were there).
+	if v, known := bitOf(m, 6); !known || v {
+		t.Errorf("bit 6 with an FM-PAC: got %v known=%v, want clear", v, known)
+	}
+	// No SRAM device anywhere: bit 6 stays unknown.
+	m, _ = InferMSX1Mask(cfgWith(nil), nil)
+	if _, known := bitOf(m, 6); known {
+		t.Error("bit 6 known without an SRAM device")
 	}
 }
 
