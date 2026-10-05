@@ -97,6 +97,9 @@ func (b *fakeBrowser) io() browserIO {
 			item := ""
 			if b.cur < len(es) {
 				item = es[b.cur]
+				if item != ".." && !b.isDir(item) {
+					item = strings.TrimSuffix(item, filepath.Ext(item)) // shown without extension
+				}
 			}
 			sel := "active"
 			if strings.HasPrefix(b.sel, "selected") {

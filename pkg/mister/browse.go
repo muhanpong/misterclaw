@@ -107,7 +107,7 @@ func (io browserIO) highlight(name string) error {
 	}
 	for i := 0; i < 64; i++ {
 		st := io.state()
-		if st.Item == name {
+		if shownAs(st.Item, name) {
 			return nil
 		}
 		if err := io.press("down"); err != nil {
@@ -181,4 +181,13 @@ func (io browserIO) browseAndSelect(path string) (st BrowserState, err error) {
 		return st, fmt.Errorf("file browser: selecting %s did not report \"selected\" (FILESELECT=%q)", name, st.Select)
 	}
 	return st, nil
+}
+
+// shownAs reports whether the browser entry item (CURRENTPATH) is name.
+// Files are listed without their extension (seen on hardware:
+// "MSXTOOLS" for MSXTOOLS.DSK); directories by their full name.  The list
+// only holds the extensions the F/S row accepts, so the stem identifies
+// the file.
+func shownAs(item, name string) bool {
+	return item == name || (item != "" && item == strings.TrimSuffix(name, filepath.Ext(name)))
 }
